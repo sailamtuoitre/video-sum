@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ChatMessageModule } from './chat-messages/chat-message.module';
 import { ChatSessionModule } from './chat-sessions/chat-session.module';
 import { ChunkModule } from './chunks/chunk.module';
 import { FlashcardModule } from './flashcards/flashcard.module';
@@ -22,6 +23,7 @@ import { VideoModule } from './video/video.module';
     FlashcardSetModule,
     FlashcardModule,
     ChatSessionModule,
+    ChatMessageModule,
   ],
 })
 export class AppModule {}
