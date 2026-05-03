@@ -30,6 +30,7 @@ model Video {
   summary      Summary?
   quizzes      Quiz[]
   flashcardSets FlashcardSet[]
+  chatSessions ChatSession[]
 
   @@map("videos")
 }
@@ -141,4 +142,33 @@ model Flashcard {
 
   @@index([setId], map: "idx_flashcards_set")
   @@map("flashcards")
+}
+
+model ChatSession {
+  id        String        @id @default(uuid()) @db.Uuid
+  videoId   String        @map("video_id") @db.Uuid
+  title     String        @default("New Chat") @db.VarChar(200)
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+  video     Video         @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  messages  ChatMessage[]
+
+  @@index([videoId], map: "idx_chat_sessions_video")
+  @@map("chat_sessions")
+}
+
+model ChatMessage {
+  id                String   @id @default(uuid()) @db.Uuid
+  sessionId         String   @map("session_id") @db.Uuid
+  role              String   @db.VarChar(20)
+  content           String   @db.Text
+  retrievedChunks   Json?    @map("retrieved_chunks") @db.JsonB
+  promptTokens      Int?     @map("prompt_tokens")
+  completionTokens  Int?     @map("completion_tokens")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+  session           ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId], map: "idx_chat_messages_session")
+  @@index([sessionId, createdAt], map: "idx_chat_messages_created")
+  @@map("chat_messages")
 }
