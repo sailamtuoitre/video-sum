@@ -29,6 +29,7 @@ model Video {
   chunks       Chunk[]
   summary      Summary?
   quizzes      Quiz[]
+  flashcardSets FlashcardSet[]
 
   @@map("videos")
 }
@@ -48,18 +49,20 @@ model Transcript {
 }
 
 model Chunk {
-  id           String     @id @default(uuid()) @db.Uuid
-  videoId      String     @map("video_id") @db.Uuid
-  transcriptId String     @map("transcript_id") @db.Uuid
-  content      String     @db.Text
-  chunkIndex   Int        @map("chunk_index")
-  tokenCount   Int?       @map("token_count")
-  startChar    Int?       @map("start_char")
-  endChar      Int?       @map("end_char")
-  embeddingId  String?    @map("embedding_id") @db.VarChar(100)
-  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz
-  video        Video      @relation(fields: [videoId], references: [id], onDelete: Cascade)
-  transcript   Transcript @relation(fields: [transcriptId], references: [id], onDelete: Cascade)
+  id             String         @id @default(uuid()) @db.Uuid
+  videoId        String         @map("video_id") @db.Uuid
+  transcriptId   String         @map("transcript_id") @db.Uuid
+  content        String         @db.Text
+  chunkIndex     Int            @map("chunk_index")
+  tokenCount     Int?           @map("token_count")
+  startChar      Int?           @map("start_char")
+  endChar        Int?           @map("end_char")
+  embeddingId    String?        @map("embedding_id") @db.VarChar(100)
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  video          Video          @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  transcript     Transcript     @relation(fields: [transcriptId], references: [id], onDelete: Cascade)
+  quizQuestions  QuizQuestion[]
+  flashcards     Flashcard[]
 
   @@index([videoId], map: "idx_chunks_video_id")
   @@index([transcriptId], map: "idx_chunks_transcript")
@@ -83,14 +86,59 @@ model Summary {
 }
 
 model Quiz {
-  id             String   @id @default(uuid()) @db.Uuid
-  videoId        String   @map("video_id") @db.Uuid
-  title          String?  @db.VarChar(200)
-  totalQuestions Int      @default(0) @map("total_questions")
-  modelUsed      String?  @map("model_used") @db.VarChar(100)
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
-  video          Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  id             String        @id @default(uuid()) @db.Uuid
+  videoId        String        @map("video_id") @db.Uuid
+  title          String?       @db.VarChar(200)
+  totalQuestions Int           @default(0) @map("total_questions")
+  modelUsed      String?       @map("model_used") @db.VarChar(100)
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  video          Video         @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  questions      QuizQuestion[]
 
   @@index([videoId], map: "idx_quizzes_video_id")
   @@map("quizzes")
+}
+
+model QuizQuestion {
+  id             String   @id @default(uuid()) @db.Uuid
+  quizId         String   @map("quiz_id") @db.Uuid
+  questionText   String   @map("question_text") @db.Text
+  options        Json     @db.JsonB
+  correctOption  String   @map("correct_option") @db.Char(1)
+  explanation    String?  @db.Text
+  questionIndex  Int      @map("question_index")
+  sourceChunkId  String?  @map("source_chunk_id") @db.Uuid
+  quiz           Quiz     @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  sourceChunk    Chunk?   @relation(fields: [sourceChunkId], references: [id])
+
+  @@index([quizId], map: "idx_quiz_questions_quiz")
+  @@map("quiz_questions")
+}
+
+model FlashcardSet {
+  id         String      @id @default(uuid()) @db.Uuid
+  videoId    String      @map("video_id") @db.Uuid
+  title      String?     @db.VarChar(200)
+  totalCards Int         @default(0) @map("total_cards")
+  modelUsed  String?     @map("model_used") @db.VarChar(100)
+  createdAt  DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  video      Video       @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  flashcards Flashcard[]
+
+  @@index([videoId], map: "idx_flashcard_sets_video")
+  @@map("flashcard_sets")
+}
+
+model Flashcard {
+  id            String   @id @default(uuid()) @db.Uuid
+  setId         String   @map("set_id") @db.Uuid
+  front         String   @db.Text
+  back          String   @db.Text
+  cardIndex     Int      @map("card_index")
+  sourceChunkId String?  @map("source_chunk_id") @db.Uuid
+  flashcardSet  FlashcardSet @relation(fields: [setId], references: [id], onDelete: Cascade)
+  sourceChunk   Chunk?   @relation(fields: [sourceChunkId], references: [id])
+
+  @@index([setId], map: "idx_flashcards_set")
+  @@map("flashcards")
 }
