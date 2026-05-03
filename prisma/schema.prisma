@@ -27,6 +27,7 @@ model Video {
   updatedAt    DateTime    @updatedAt @map("updated_at") @db.Timestamptz
   transcripts  Transcript[]
   chunks       Chunk[]
+  summary      Summary?
 
   @@map("videos")
 }
@@ -63,4 +64,19 @@ model Chunk {
   @@index([transcriptId], map: "idx_chunks_transcript")
   @@index([videoId, chunkIndex], map: "idx_chunks_index")
   @@map("chunks")
+}
+
+model Summary {
+  id               String   @id @default(uuid()) @db.Uuid
+  videoId          String   @unique(map: "idx_summaries_video_id") @map("video_id") @db.Uuid
+  keyPoints        Json     @map("key_points") @db.JsonB
+  simplifiedText   String   @map("simplified_text") @db.Text
+  mainTopics       Json?    @map("main_topics") @db.JsonB
+  modelUsed        String?  @map("model_used") @db.VarChar(100)
+  promptTokens     Int?     @map("prompt_tokens")
+  completionTokens Int?     @map("completion_tokens")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+  video            Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@map("summaries")
 }
