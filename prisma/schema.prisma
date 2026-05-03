@@ -28,6 +28,7 @@ model Video {
   transcripts  Transcript[]
   chunks       Chunk[]
   summary      Summary?
+  quizzes      Quiz[]
 
   @@map("videos")
 }
@@ -79,4 +80,17 @@ model Summary {
   video            Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
 
   @@map("summaries")
+}
+
+model Quiz {
+  id             String   @id @default(uuid()) @db.Uuid
+  videoId        String   @map("video_id") @db.Uuid
+  title          String?  @db.VarChar(200)
+  totalQuestions Int      @default(0) @map("total_questions")
+  modelUsed      String?  @map("model_used") @db.VarChar(100)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  video          Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@index([videoId], map: "idx_quizzes_video_id")
+  @@map("quizzes")
 }
