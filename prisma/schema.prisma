@@ -26,6 +26,7 @@ model Video {
   createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz
   updatedAt    DateTime    @updatedAt @map("updated_at") @db.Timestamptz
   transcripts  Transcript[]
+  chunks       Chunk[]
 
   @@map("videos")
 }
@@ -38,7 +39,28 @@ model Transcript {
   wordCount Int?     @map("word_count")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
   video     Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  chunks    Chunk[]
 
   @@index([videoId], map: "idx_transcripts_video_id")
   @@map("transcripts")
+}
+
+model Chunk {
+  id           String     @id @default(uuid()) @db.Uuid
+  videoId      String     @map("video_id") @db.Uuid
+  transcriptId String     @map("transcript_id") @db.Uuid
+  content      String     @db.Text
+  chunkIndex   Int        @map("chunk_index")
+  tokenCount   Int?       @map("token_count")
+  startChar    Int?       @map("start_char")
+  endChar      Int?       @map("end_char")
+  embeddingId  String?    @map("embedding_id") @db.VarChar(100)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz
+  video        Video      @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  transcript   Transcript @relation(fields: [transcriptId], references: [id], onDelete: Cascade)
+
+  @@index([videoId], map: "idx_chunks_video_id")
+  @@index([transcriptId], map: "idx_chunks_transcript")
+  @@index([videoId, chunkIndex], map: "idx_chunks_index")
+  @@map("chunks")
 }
