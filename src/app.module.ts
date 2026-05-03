@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ChunkModule } from './chunks/chunk.module';
+import { FlashcardModule } from './flashcards/flashcard.module';
 import { FlashcardSetModule } from './flashcard-sets/flashcard-set.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { QuizModule } from './quizzes/quiz.module';
@@ -18,6 +19,7 @@ import { VideoModule } from './video/video.module';
     QuizModule,
     QuizQuestionModule,
     FlashcardSetModule,
+    FlashcardModule,
   ],
 })
 export class AppModule {}
