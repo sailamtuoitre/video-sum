@@ -25,6 +25,20 @@ model Video {
   errorMessage String?     @map("error_message") @db.Text
   createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz
   updatedAt    DateTime    @updatedAt @map("updated_at") @db.Timestamptz
+  transcripts  Transcript[]
 
   @@map("videos")
+}
+
+model Transcript {
+  id        String   @id @default(uuid()) @db.Uuid
+  videoId   String   @map("video_id") @db.Uuid
+  rawText   String   @map("raw_text") @db.Text
+  source    String   @db.VarChar(20)
+  wordCount Int?     @map("word_count")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  video     Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@index([videoId], map: "idx_transcripts_video_id")
+  @@map("transcripts")
 }
