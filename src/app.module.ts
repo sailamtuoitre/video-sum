@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { ChatMessageModule } from './chat-messages/chat-message.module';
 import { ChatSessionModule } from './chat-sessions/chat-session.module';
 import { ChunkModule } from './chunks/chunk.module';
@@ -13,6 +14,7 @@ import { VideoModule } from './video/video.module';
 
 @Module({
   imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
     PrismaModule,
     VideoModule,
     TranscriptModule,
