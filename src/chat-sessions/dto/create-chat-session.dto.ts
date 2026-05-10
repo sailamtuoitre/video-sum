@@ -6,8 +6,13 @@ import {
 } from 'class-validator';
 
 export class CreateChatSessionDto {
+  @IsOptional()
   @IsUUID()
-  videoId: string;
+  projectId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  videoId?: string;
 
   @IsOptional()
   @IsString()

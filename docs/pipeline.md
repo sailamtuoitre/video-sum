@@ -529,7 +529,7 @@ Generate flashcards Q&A pairs từ video content.
 ```
 src/modules/flashcard/
 ├── flashcard.module.ts
-├── flashcard.controller.ts    ← POST /videos/:id/flashcards, GET, DELETE
+├── flashcard-set.controller.ts ← POST /flashcard-sets/from-video/:id, study/review
 ├── flashcard.service.ts       ← generate(), findByVideoId()
 ├── flashcard-set.entity.ts    ← id, video_id, title, total_cards
 └── flashcard.entity.ts        ← id, set_id, front, back, card_index

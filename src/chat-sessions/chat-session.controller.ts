@@ -23,8 +23,11 @@ export class ChatSessionController {
   }
 
   @Get()
-  findAll(@Query('videoId') videoId?: string) {
-    return this.chatSessionService.findAll(videoId);
+  findAll(
+    @Query('projectId') projectId?: string,
+    @Query('videoId') videoId?: string,
+  ) {
+    return this.chatSessionService.findAll(projectId, videoId);
   }
 
   @Get(':id')

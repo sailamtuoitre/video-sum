@@ -71,6 +71,19 @@ function getNewCaptionSegment(previous: string, current: string) {
   return getOverlapSuffix(previousWords, currentWords);
 }
 
+function ensureTerminalPunctuation(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  if (/[.!?…]$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  return `${trimmed}.`;
+}
+
 export function cleanTranscriptText(rawText: string) {
   return normalizeVietnameseTranscript(stripCaptionMarkup(rawText));
 }
@@ -114,7 +127,7 @@ export function parseYoutubeVtt(vtt: string) {
 
     const newSegment = getNewCaptionSegment(previousCaption, caption);
     if (newSegment) {
-      segments.push(newSegment);
+      segments.push(ensureTerminalPunctuation(newSegment));
     }
 
     previousCaption = caption;

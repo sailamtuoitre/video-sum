@@ -439,7 +439,7 @@ Delete the quiz (allows regeneration).
 
 ## 6. Flashcard Endpoints
 
-### `POST /videos/:videoId/flashcards`
+### `POST /flashcard-sets/from-video/:videoId`
 
 Generate a flashcard set for a video. Idempotent.
 
@@ -477,11 +477,29 @@ Generate a flashcard set for a video. Idempotent.
 
 ---
 
-### `GET /videos/:videoId/flashcards`
+### `POST /flashcard-sets/from-project/:projectId`
+
+Generate a flashcard set for a project.
+
+---
+
+### `GET /flashcard-sets/:id/study`
+
+Get the study state for a flashcard set.
+
+---
+
+### `POST /flashcard-sets/:id/study/review`
+
+Mark a flashcard as `known` or `unknown` and return the updated study state.
+
+---
+
+### `GET /flashcard-sets/:id`
 
 Get the existing flashcard set.
 
-**Response `200 OK`:** Same structure as POST response above.
+**Response `200 OK`:** Same structure as the generate response above, including `flashcards`.
 
 **Response `404 Not Found`:**
 ```json
@@ -493,14 +511,14 @@ Get the existing flashcard set.
 
 ---
 
-### `DELETE /videos/:videoId/flashcards`
+### `POST /flashcard-sets/:id/study/reset`
 
-Delete the flashcard set.
+Reset study progress for a flashcard set.
 
 **Response `200 OK`:**
 ```json
 {
-  "message": "Flashcard set deleted"
+  "message": "Study progress reset"
 }
 ```
 

@@ -22,6 +22,11 @@ export class SummaryController {
     return this.summaryService.create(createSummaryDto);
   }
 
+  @Post('from-video/:videoId')
+  createFromVideo(@Param('videoId', ParseUUIDPipe) videoId: string) {
+    return this.summaryService.createFromVideo(videoId);
+  }
+
   @Get()
   findAll(@Query('videoId') videoId?: string) {
     return this.summaryService.findAll(videoId);

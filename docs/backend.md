@@ -563,7 +563,7 @@ async getSummary(@Param('id') id: string) { ... }
 | `GET /videos/:id` | 60 giây | Cập nhật khi status thay đổi |
 | `GET /videos/:id/summary` | 3600 giây (1h) | Bất biến sau khi tạo |
 | `GET /videos/:id/quiz` | 86400 giây (24h) | Bất biến sau khi tạo |
-| `GET /videos/:id/flashcards` | 86400 giây (24h) | Bất biến sau khi tạo |
+| `GET /flashcard-sets/:id` | 86400 giây (24h) | Bất biến sau khi tạo |
 | `GET /chat/sessions/:id/messages` | Không cache | Luôn lấy fresh |
 
 Cache tự mất khi server restart — không ảnh hưởng vì data vẫn trong SQLite.

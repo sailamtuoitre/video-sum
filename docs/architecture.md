@@ -326,7 +326,7 @@ Không cần Redis, không cần BullMQ. Nếu server restart trong khi đang x�
 | Video metadata | `video:{id}` | 1 hour | Cache-aside |
 | Summary | `summary:{videoId}` | 24 hours | Cache-aside |
 | Quiz | `quiz:{videoId}` | 24 hours | Cache-aside |
-| Flashcards | `flashcards:{videoId}` | 24 hours | Cache-aside |
+| Flashcards | `flashcard-set:{id}` | 24 hours | Cache-aside |
 | Chat history | `chat:{sessionId}` | 30 min | Write-through |
 
 ### 7.3 Token Budget Management

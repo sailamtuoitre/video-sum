@@ -14,8 +14,15 @@ enum VideoStatus {
   failed
 }
 
+enum FlashcardStudyStatus {
+  pending
+  known
+  unknown
+}
+
 model Video {
   id           String      @id @default(uuid()) @db.Uuid
+  projectId    String?     @map("project_id") @db.Uuid
   youtubeId    String      @unique @map("youtube_id") @db.VarChar(20)
   url          String      @db.Text
   title        String?     @db.VarChar(500)
@@ -25,6 +32,7 @@ model Video {
   errorMessage String?     @map("error_message") @db.Text
   createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz
   updatedAt    DateTime    @updatedAt @map("updated_at") @db.Timestamptz
+  project      Project?    @relation(fields: [projectId], references: [id], onDelete: SetNull)
   transcripts  Transcript[]
   chunks       Chunk[]
   summary      Summary?
@@ -32,7 +40,21 @@ model Video {
   flashcardSets FlashcardSet[]
   chatSessions ChatSession[]
 
+  @@index([projectId], map: "idx_videos_project_id")
   @@map("videos")
+}
+
+model Project {
+  id           String        @id @default(uuid()) @db.Uuid
+  name         String        @db.VarChar(200)
+  description  String?       @db.Text
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+  videos       Video[]
+  flashcardSets FlashcardSet[]
+  chatSessions ChatSession[]
+
+  @@map("projects")
 }
 
 model Transcript {
@@ -118,15 +140,19 @@ model QuizQuestion {
 
 model FlashcardSet {
   id         String      @id @default(uuid()) @db.Uuid
-  videoId    String      @map("video_id") @db.Uuid
+  videoId    String?     @map("video_id") @db.Uuid
+  projectId  String?     @map("project_id") @db.Uuid
   title      String?     @db.VarChar(200)
   totalCards Int         @default(0) @map("total_cards")
   modelUsed  String?     @map("model_used") @db.VarChar(100)
   createdAt  DateTime    @default(now()) @map("created_at") @db.Timestamptz
-  video      Video       @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  video      Video?      @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  project    Project?    @relation(fields: [projectId], references: [id], onDelete: Cascade)
   flashcards Flashcard[]
+  studyProgress FlashcardStudyProgress[]
 
   @@index([videoId], map: "idx_flashcard_sets_video")
+  @@index([projectId], map: "idx_flashcard_sets_project")
   @@map("flashcard_sets")
 }
 
@@ -139,20 +165,42 @@ model Flashcard {
   sourceChunkId String?  @map("source_chunk_id") @db.Uuid
   flashcardSet  FlashcardSet @relation(fields: [setId], references: [id], onDelete: Cascade)
   sourceChunk   Chunk?   @relation(fields: [sourceChunkId], references: [id])
+  studyProgress FlashcardStudyProgress[]
 
   @@index([setId], map: "idx_flashcards_set")
   @@map("flashcards")
 }
 
-model ChatSession {
-  id        String        @id @default(uuid()) @db.Uuid
-  videoId   String        @map("video_id") @db.Uuid
-  title     String        @default("New Chat") @db.VarChar(200)
-  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt DateTime      @updatedAt @map("updated_at") @db.Timestamptz
-  video     Video         @relation(fields: [videoId], references: [id], onDelete: Cascade)
-  messages  ChatMessage[]
+model FlashcardStudyProgress {
+  id            String               @id @default(uuid()) @db.Uuid
+  setId         String               @map("set_id") @db.Uuid
+  flashcardId   String               @map("flashcard_id") @db.Uuid
+  status        FlashcardStudyStatus  @default(pending)
+  reviewCount   Int                  @default(0) @map("review_count")
+  lastReviewedAt DateTime?           @map("last_reviewed_at") @db.Timestamptz
+  createdAt     DateTime             @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime             @updatedAt @map("updated_at") @db.Timestamptz
+  flashcardSet  FlashcardSet         @relation(fields: [setId], references: [id], onDelete: Cascade)
+  flashcard     Flashcard            @relation(fields: [flashcardId], references: [id], onDelete: Cascade)
 
+  @@unique([setId, flashcardId], map: "uniq_flashcard_study_progress_card")
+  @@index([setId], map: "idx_flashcard_study_progress_set")
+  @@index([flashcardId], map: "idx_flashcard_study_progress_card")
+  @@map("flashcard_study_progress")
+}
+
+model ChatSession {
+  id         String        @id @default(uuid()) @db.Uuid
+  projectId  String?       @map("project_id") @db.Uuid
+  videoId    String?       @map("video_id") @db.Uuid
+  title      String        @default("New Chat") @db.VarChar(200)
+  createdAt  DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+  project    Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  video      Video?        @relation(fields: [videoId], references: [id], onDelete: SetNull)
+  messages   ChatMessage[]
+
+  @@index([projectId], map: "idx_chat_sessions_project")
   @@index([videoId], map: "idx_chat_sessions_video")
   @@map("chat_sessions")
 }

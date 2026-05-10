@@ -1,47 +1,57 @@
 import {
   Body,
   Controller,
-  Delete,
   Get,
   Param,
   ParseUUIDPipe,
-  Patch,
   Post,
   Query,
 } from '@nestjs/common';
-import { CreateFlashcardSetDto } from './dto/create-flashcard-set.dto';
-import { UpdateFlashcardSetDto } from './dto/update-flashcard-set.dto';
+import { ReviewFlashcardCardDto } from './dto/review-flashcard-card.dto';
 import { FlashcardSetService } from './flashcard-set.service';
 
 @Controller('flashcard-sets')
 export class FlashcardSetController {
   constructor(private readonly flashcardSetService: FlashcardSetService) {}
 
-  @Post()
-  create(@Body() createFlashcardSetDto: CreateFlashcardSetDto) {
-    return this.flashcardSetService.create(createFlashcardSetDto);
+  @Post('from-video/:videoId')
+  createFromVideo(@Param('videoId', ParseUUIDPipe) videoId: string) {
+    return this.flashcardSetService.createFromVideo(videoId);
+  }
+
+  @Post('from-project/:projectId')
+  createFromProject(@Param('projectId', ParseUUIDPipe) projectId: string) {
+    return this.flashcardSetService.createFromProject(projectId);
+  }
+
+  @Get(':id/study')
+  getStudyState(@Param('id', ParseUUIDPipe) id: string) {
+    return this.flashcardSetService.getStudyState(id);
+  }
+
+  @Post(':id/study/review')
+  reviewCard(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() reviewFlashcardCardDto: ReviewFlashcardCardDto,
+  ) {
+    return this.flashcardSetService.reviewCard(id, reviewFlashcardCardDto);
+  }
+
+  @Post(':id/study/reset')
+  resetStudy(@Param('id', ParseUUIDPipe) id: string) {
+    return this.flashcardSetService.resetStudy(id);
   }
 
   @Get()
-  findAll(@Query('videoId') videoId?: string) {
-    return this.flashcardSetService.findAll(videoId);
+  findAll(
+    @Query('videoId') videoId?: string,
+    @Query('projectId') projectId?: string,
+  ) {
+    return this.flashcardSetService.findAll(videoId, projectId);
   }
 
   @Get(':id')
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.flashcardSetService.findOne(id);
-  }
-
-  @Patch(':id')
-  update(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Body() updateFlashcardSetDto: UpdateFlashcardSetDto,
-  ) {
-    return this.flashcardSetService.update(id, updateFlashcardSetDto);
-  }
-
-  @Delete(':id')
-  remove(@Param('id', ParseUUIDPipe) id: string) {
-    return this.flashcardSetService.remove(id);
   }
 }

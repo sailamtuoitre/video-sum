@@ -122,7 +122,7 @@ refactor: extract prompt templates to constants
 - Mock all external APIs (OpenAI, Qdrant) in unit tests
 - Integration tests for critical paths: video ingestion, RAG query
 - Test file location: co-located with source (`video.service.spec.ts`)
-- Run tests: `npm run test` (unit), `npm run test:e2e` (e2e)
+- Run tests: `npm run test` (unit)
 
 ---
 

@@ -14,15 +14,19 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateVideoDto } from './dto/create-video.dto';
 import { cleanTranscriptText, parseYoutubeVtt } from './transcript-cleaner';
 import { UpdateVideoDto } from './dto/update-video.dto';
+import { SummaryService } from '../summaries/summary.service';
 import { WhisperService } from '../whisper/whisper.service';
 
 const execAsync = promisify(exec);
 
 @Injectable()
 export class VideoService {
+  private readonly logger = new Logger(VideoService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly whisperService: WhisperService,
+    private readonly summaryService: SummaryService,
   ) {}
 
   async create(createVideoDto: CreateVideoDto) {
@@ -30,16 +34,23 @@ export class VideoService {
       | Awaited<ReturnType<PrismaService['video']['create']>>
       | undefined;
 
+    const youtubeId = createVideoDto.youtubeId!;
+
     try {
       video = await this.prisma.video.create({
         data: {
-          ...createVideoDto,
+          youtubeId,
+          url: createVideoDto.url,
+          title: createVideoDto.title,
+          projectId: createVideoDto.projectId ?? null,
+          durationSec: createVideoDto.durationSec,
+          language: createVideoDto.language,
           status: 'processing',
           errorMessage: null,
         },
       });
 
-      return await this.processVideo(video.id, createVideoDto.youtubeId);
+      return await this.processVideo(video.id, youtubeId);
     } catch (error) {
       if (video) {
         await this.prisma.video.update({
@@ -122,6 +133,10 @@ export class VideoService {
         throw new ConflictException('Video youtubeId already exists');
       }
 
+      if (error.code === 'P2003') {
+        throw new NotFoundException('Related project not found');
+      }
+
       if (error.code === 'P2025') {
         throw new NotFoundException(`Video with id "${id}" not found`);
       }
@@ -154,23 +169,19 @@ export class VideoService {
       },
     });
 
-    const chunks = this.buildChunks(cleanedText).map((chunk) => ({
-      videoId,
-      transcriptId: transcript.id,
-      content: chunk.content,
-      chunkIndex: chunk.chunkIndex,
-      tokenCount: this.countWords(chunk.content),
-      startChar: chunk.startChar,
-      endChar: chunk.endChar,
-    }));
+    let summary:
+      | Awaited<ReturnType<SummaryService['createFromVideo']>>
+      | null = null;
 
-    await this.prisma.chunk.createMany({
-      data: chunks,
-    });
-
-    const summary = await this.prisma.summary.create({
-      data: this.buildSummary(videoId, chunks.map((chunk) => chunk.content)),
-    });
+    try {
+      summary = await this.summaryService.createFromVideo(videoId);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'summary generation failed';
+      this.logger.warn(
+        `Summary generation failed for video "${videoId}": ${message}`,
+      );
+    }
 
     const completedVideo = await this.prisma.video.update({
       where: {
@@ -185,7 +196,6 @@ export class VideoService {
     return {
       video: completedVideo,
       transcript,
-      chunksCreated: chunks.length,
       summary,
     };
   }
@@ -217,106 +227,6 @@ export class VideoService {
     }
 
     throw new Error('No YouTube captions found for this video');
-  }
-  private parseTimedText(xml: string) {
-    const matches = [...xml.matchAll(/<text[^>]*>([\s\S]*?)<\/text>/g)];
-
-    const text = matches
-      .map((match) => this.decodeHtml(match[1]))
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    return text.length > 0 ? text : null;
-  }
-
-  private decodeHtml(value: string) {
-    return value
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'")
-      .replace(/&#(\d+);/g, (_, code: string) =>
-        String.fromCharCode(Number(code)),
-      );
-  }
-
-  private buildChunks(rawText: string) {
-    const maxWords = 180;
-    const words = rawText.split(/\s+/).filter(Boolean);
-    const chunks: Array<{
-      content: string;
-      chunkIndex: number;
-      startChar: number;
-      endChar: number;
-    }> = [];
-    let cursor = 0;
-
-    for (let index = 0; index < words.length; index += maxWords) {
-      const content = words.slice(index, index + maxWords).join(' ');
-      const startChar = rawText.indexOf(content.split(' ')[0], cursor);
-      const endChar = startChar + content.length;
-      cursor = endChar;
-
-      chunks.push({
-        content,
-        chunkIndex: chunks.length,
-        startChar: Math.max(startChar, 0),
-        endChar,
-      });
-    }
-
-    return chunks;
-  }
-
-  private buildSummary(videoId: string, chunks: string[]) {
-    const keyPoints = chunks.slice(0, 5).map((chunk) => {
-      const sentences = chunk.match(/[^.!?。！？]+[.!?。！？]?/g) ?? [chunk];
-      return sentences[0].trim();
-    });
-    const simplifiedText = keyPoints.join(' ');
-
-    return {
-      videoId,
-      keyPoints,
-      simplifiedText,
-      mainTopics: this.extractMainTopics(chunks.join(' ')),
-      modelUsed: 'extractive-mvp',
-      promptTokens: 0,
-      completionTokens: this.countWords(simplifiedText),
-    };
-  }
-
-  private extractMainTopics(text: string) {
-    const stopWords = new Set([
-      'và',
-      'là',
-      'của',
-      'có',
-      'cho',
-      'the',
-      'and',
-      'you',
-      'that',
-      'this',
-      'with',
-    ]);
-
-    const counts = text
-      .toLowerCase()
-      .match(/[\p{L}\p{N}]+/gu)
-      ?.filter((word) => word.length > 3 && !stopWords.has(word))
-      .reduce<Record<string, number>>((accumulator, word) => {
-        accumulator[word] = (accumulator[word] ?? 0) + 1;
-        return accumulator;
-      }, {});
-
-    return Object.entries(counts ?? {})
-      .sort((left, right) => right[1] - left[1])
-      .slice(0, 5)
-      .map(([word]) => word);
   }
 
   private countWords(text: string) {

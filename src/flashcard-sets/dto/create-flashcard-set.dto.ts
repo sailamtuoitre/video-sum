@@ -8,8 +8,13 @@ import {
 } from 'class-validator';
 
 export class CreateFlashcardSetDto {
+  @IsOptional()
   @IsUUID()
-  videoId: string;
+  videoId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  projectId?: string;
 
   @IsOptional()
   @IsString()

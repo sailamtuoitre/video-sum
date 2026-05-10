@@ -22,6 +22,18 @@ export class ChunkController {
     return this.chunkService.create(createChunkDto);
   }
 
+  @Post('preview')
+  preview(@Body() previewChunkInput: unknown) {
+    const normalizedText =
+      this.chunkService.normalizeChunkPreviewInput(previewChunkInput);
+    return this.chunkService.previewTranscriptChunks(normalizedText);
+  }
+
+  @Post('from-video/:videoId')
+  previewFromVideo(@Param('videoId', ParseUUIDPipe) videoId: string) {
+    return this.chunkService.previewChunksFromVideo(videoId);
+  }
+
   @Get()
   findAll(
     @Query('videoId') videoId?: string,

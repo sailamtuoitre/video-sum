@@ -22,6 +22,11 @@ export class QuizController {
     return this.quizService.create(createQuizDto);
   }
 
+  @Post('from-video/:videoId')
+  createFromVideo(@Param('videoId', ParseUUIDPipe) videoId: string) {
+    return this.quizService.createFromVideo(videoId);
+  }
+
   @Get()
   findAll(@Query('videoId') videoId?: string) {
     return this.quizService.findAll(videoId);

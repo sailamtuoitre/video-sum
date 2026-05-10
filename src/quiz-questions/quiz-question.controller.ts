@@ -10,6 +10,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { CreateQuizQuestionDto } from './dto/create-quiz-question.dto';
+import { CheckQuizQuestionAnswerDto } from './dto/check-quiz-question-answer.dto';
 import { UpdateQuizQuestionDto } from './dto/update-quiz-question.dto';
 import { QuizQuestionService } from './quiz-question.service';
 
@@ -20,6 +21,14 @@ export class QuizQuestionController {
   @Post()
   create(@Body() createQuizQuestionDto: CreateQuizQuestionDto) {
     return this.quizQuestionService.create(createQuizQuestionDto);
+  }
+
+  @Post(':id/check-answer')
+  checkAnswer(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() answerDto: CheckQuizQuestionAnswerDto,
+  ) {
+    return this.quizQuestionService.checkAnswer(id, answerDto);
   }
 
   @Get()

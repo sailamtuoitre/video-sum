@@ -300,9 +300,16 @@ export const api = {
 
   // Flashcards
   generateFlashcards: (videoId: string) =>
-    client.post<FlashcardSet>(`/videos/${videoId}/flashcards`).then(r => r.data),
-  getFlashcards: (videoId: string) =>
-    client.get<FlashcardSet>(`/videos/${videoId}/flashcards`).then(r => r.data),
+    client.post<FlashcardSet>(`/flashcard-sets/from-video/${videoId}`).then(r => r.data),
+  getFlashcardSet: (setId: string) =>
+    client.get<FlashcardSet>(`/flashcard-sets/${setId}`).then(r => r.data),
+  getFlashcardStudyState: (setId: string) =>
+    client.get<FlashcardStudyState>(`/flashcard-sets/${setId}/study`).then(r => r.data),
+  reviewFlashcardCard: (setId: string, flashcardId: string, status: 'known' | 'unknown') =>
+    client.post<FlashcardStudyState>(`/flashcard-sets/${setId}/study/review`, {
+      flashcardId,
+      status,
+    }).then(r => r.data),
 };
 ```
 
@@ -351,13 +358,13 @@ export const api = {
 
 ```
 1. User lands on FlashcardPage
-2. Check if set exists (GET /videos/:id/flashcards)
-3. If none: show "Generate Flashcards" → POST /videos/:id/flashcards
-4. Render first card (front = question)
+2. Check if flashcard set exists or generate one (POST /flashcard-sets/from-video/:videoId)
+3. Load study state (GET /flashcard-sets/:id/study)
+4. Render current card only
 5. User clicks card → flip animation (CSS 3D rotateY)
 6. Back = answer
-7. Next / Prev buttons navigate cards
-8. Progress: "3 / 15"
+7. User marks "Đã thuộc" or "Chưa thuộc" → POST /flashcard-sets/:id/study/review
+8. Backend returns updated counts + next current card
 ```
 
 ---

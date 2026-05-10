@@ -1,24 +1,27 @@
-import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { exec } from 'child_process';
-import { unlinkSync, existsSync, readFileSync } from 'fs';
+import { unlinkSync, existsSync } from 'fs';
 import { join } from 'path';
 import { promisify } from 'util';
+import { GroqGatewayService } from '../groq-gateway/groq-gateway.service';
 
 const execAsync = promisify(exec);
 
 @Injectable()
 export class WhisperService {
   private readonly logger = new Logger(WhisperService.name);
-  private readonly transcriptionEndpoint =
-    'https://api.groq.com/openai/v1/audio/transcriptions';
-  private readonly retryableStatuses = new Set([408, 429, 500, 502, 503, 504]);
+
+  constructor(private readonly groqGateway: GroqGatewayService) {}
 
   async transcribeFromYoutube(youtubeId: string): Promise<string> {
     const audioPath = await this.downloadAudio(youtubeId);
 
     try {
-      const transcript = await this.transcribe(audioPath);
-      return transcript;
+      return await this.transcribe(audioPath);
     } finally {
       if (existsSync(audioPath)) {
         unlinkSync(audioPath);
@@ -27,159 +30,21 @@ export class WhisperService {
   }
 
   async transcribe(filePath: string): Promise<string> {
-    const apiKey = process.env.GROQ_API_KEY;
-
-    if (!apiKey) {
+    if (!this.groqGateway.hasKeys()) {
       throw new ServiceUnavailableException(
-        'GROQ_API_KEY is required to use Groq transcription',
+        'GROQ_API_KEY or GROQ_API_KEYS is required to use Groq transcription',
       );
     }
 
-    const transcript = await this.transcribeWithRetry(filePath, apiKey);
+    const transcript = await this.groqGateway.transcribe(filePath);
 
-    if (!transcript.trim()) {
+    if (!transcript || !transcript.trim()) {
       throw new ServiceUnavailableException({
         message: 'Groq transcription returned empty text',
       });
     }
 
     return transcript;
-  }
-
-  private async transcribeWithRetry(filePath: string, apiKey: string) {
-    const maxAttempts = 3;
-    let lastErrorMessage = 'Groq transcription failed';
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      try {
-        const response = await this.requestTranscription(filePath, apiKey);
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          const summarizedError = this.summarizeHttpError(
-            response.status,
-            errorText,
-          );
-
-          if (
-            attempt < maxAttempts &&
-            this.retryableStatuses.has(response.status)
-          ) {
-            this.logger.warn(
-              `Groq transcription attempt ${attempt}/${maxAttempts} failed: ${summarizedError}. Retrying...`,
-            );
-            await this.delay(attempt * 1500);
-            lastErrorMessage = summarizedError;
-            continue;
-          }
-
-          this.logger.error(
-            `Groq transcription failed after ${attempt} attempt(s): ${summarizedError}`,
-          );
-          throw new ServiceUnavailableException(summarizedError);
-        }
-
-        return await response.text();
-      } catch (error) {
-        const message = this.extractErrorMessage(error);
-
-        if (attempt < maxAttempts) {
-          this.logger.warn(
-            `Groq transcription attempt ${attempt}/${maxAttempts} threw: ${message}. Retrying...`,
-          );
-          await this.delay(attempt * 1500);
-          lastErrorMessage = message;
-          continue;
-        }
-
-        this.logger.error(
-          `Groq transcription failed after ${attempt} attempt(s): ${message}`,
-        );
-
-        if (error instanceof ServiceUnavailableException) {
-          throw error;
-        }
-
-        throw new ServiceUnavailableException(
-          `Groq transcription unavailable: ${message}`,
-        );
-      }
-    }
-
-    throw new ServiceUnavailableException(lastErrorMessage);
-  }
-
-  private async requestTranscription(filePath: string, apiKey: string) {
-    const formData = new FormData();
-    const audioBuffer = readFileSync(filePath);
-    const audioFile = new Blob([audioBuffer], { type: 'audio/mpeg' });
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 90_000);
-
-    formData.append('file', audioFile, 'audio.mp3');
-    formData.append(
-      'model',
-      process.env.GROQ_WHISPER_MODEL || 'whisper-large-v3-turbo',
-    );
-    formData.append('response_format', 'text');
-
-    try {
-      return await fetch(this.transcriptionEndpoint, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: formData,
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-
-  private summarizeHttpError(status: number, errorText: string) {
-    const normalized = errorText
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    if (!normalized) {
-      return `Groq transcription failed with HTTP ${status}`;
-    }
-
-    return `Groq transcription failed with HTTP ${status}: ${normalized}`;
-  }
-
-  private extractErrorMessage(error: unknown) {
-    if (error instanceof ServiceUnavailableException) {
-      const response = error.getResponse();
-      if (typeof response === 'string') {
-        return response;
-      }
-
-      if (
-        response &&
-        typeof response === 'object' &&
-        'message' in response &&
-        typeof response.message === 'string'
-      ) {
-        return response.message;
-      }
-    }
-
-    if (error instanceof Error) {
-      if (error.name === 'AbortError') {
-        return 'request timed out';
-      }
-
-      return error.message;
-    }
-
-    return 'unknown error';
-  }
-
-  private async delay(ms: number) {
-    await new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   private async downloadAudio(youtubeId: string): Promise<string> {
@@ -200,8 +65,7 @@ export class WhisperService {
 
       return outputTemplate;
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'yt-dlp failed';
+      const message = error instanceof Error ? error.message : 'yt-dlp failed';
       this.logger.error(`Audio download failed: ${message}`);
       throw new Error(
         `Failed to download YouTube audio. Is yt-dlp installed? ${message}`,

@@ -1,7 +1,6 @@
 import {
   IsArray,
   IsInt,
-  IsJSON,
   IsOptional,
   IsString,
   IsUUID,
@@ -21,8 +20,8 @@ export class CreateChatMessageDto {
   content: string;
 
   @IsOptional()
-  @IsJSON()
-  retrievedChunks?: string[];
+  @IsArray()
+  retrievedChunks?: unknown[];
 
   @IsOptional()
   @IsInt()

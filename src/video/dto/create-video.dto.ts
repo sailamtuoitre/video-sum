@@ -3,24 +3,31 @@ import {
   IsInt,
   IsOptional,
   IsString,
-  IsUrl,
+  IsUUID,
   Length,
+  Matches,
   Max,
   Min,
 } from 'class-validator';
 
 export class CreateVideoDto {
+  @IsOptional()
   @IsString()
   @Length(1, 20)
-  youtubeId: string;
+  youtubeId?: string;
 
-  @IsUrl({ require_protocol: true })
+  @IsString()
+  @Matches(/youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\//)
   url: string;
 
   @IsOptional()
   @IsString()
   @Length(1, 500)
   title?: string;
+
+  @IsOptional()
+  @IsUUID()
+  projectId?: string;
 
   @IsOptional()
   @IsInt()
