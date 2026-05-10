@@ -8,9 +8,6 @@ import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { join } from 'path';
 import { PrismaService } from '../prisma/prisma.service';
-import { VectorStoreService } from '../vector-store/vector-store.service';
-import { CreateChunkDto } from './dto/create-chunk.dto';
-import { UpdateChunkDto } from './dto/update-chunk.dto';
 
 type GeneratedChunk = {
   content: string;
@@ -20,11 +17,6 @@ type GeneratedChunk = {
   endChar: number;
 };
 
-type SemanticChunkResult = {
-  text?: string;
-  token_length?: number;
-};
-
 type ChunkBuildStrategy = 'semantic' | 'fixed-word-fallback';
 
 type ChunkBuildResult = {
@@ -32,16 +24,22 @@ type ChunkBuildResult = {
   chunks: GeneratedChunk[];
 };
 
-type ChunksFromVideoResult = ChunkBuildResult & {
+type ChunksFromVideoResult = {
   videoId: string;
   transcriptId: string;
-  source: string;
-  wordCount: number | null;
+  strategy: ChunkBuildStrategy;
+  count: number;
+  chunks: Awaited<ReturnType<PrismaService['chunk']['findMany']>>;
 };
 
-type ChunkPreviewPayload = {
+type PreviewPayload = {
   text?: string;
   rawText?: string;
+};
+
+type SemanticChunkResult = {
+  text?: string;
+  token_length?: number;
 };
 
 type SemanticChunkingModule = {
@@ -54,40 +52,25 @@ type SemanticChunkingModule = {
   ) => Promise<unknown>;
 };
 
-function isChunkPreviewPayload(value: unknown): value is ChunkPreviewPayload {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    ('text' in value || 'rawText' in value)
-  );
-}
-
 @Injectable()
 export class ChunkService {
   private readonly logger = new Logger(ChunkService.name);
+  private readonly fixedChunkMaxWords = 180;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
-    private readonly vectorStoreService: VectorStoreService,
   ) {}
-
-  async create(createChunkDto: CreateChunkDto) {
-    try {
-      return await this.prisma.chunk.create({
-        data: createChunkDto,
-      });
-    } catch (error) {
-      this.handlePrismaError(error);
-    }
-  }
 
   findAll(videoId?: string, transcriptId?: string) {
     return this.prisma.chunk.findMany({
-      where: {
-        ...(videoId ? { videoId } : {}),
-        ...(transcriptId ? { transcriptId } : {}),
-      },
+      where:
+        videoId || transcriptId
+          ? {
+              ...(videoId ? { videoId } : {}),
+              ...(transcriptId ? { transcriptId } : {}),
+            }
+          : undefined,
       orderBy: [
         {
           videoId: 'asc',
@@ -113,19 +96,6 @@ export class ChunkService {
     return chunk;
   }
 
-  async update(id: string, updateChunkDto: UpdateChunkDto) {
-    try {
-      return await this.prisma.chunk.update({
-        where: {
-          id,
-        },
-        data: updateChunkDto,
-      });
-    } catch (error) {
-      this.handlePrismaError(error, id);
-    }
-  }
-
   async remove(id: string) {
     try {
       return await this.prisma.chunk.delete({
@@ -138,31 +108,13 @@ export class ChunkService {
     }
   }
 
-  normalizeChunkPreviewInput(input: unknown) {
+  normalizePreviewInput(input: unknown): string {
     if (typeof input === 'string') {
-      const normalized = input.trim();
-      if (!normalized) {
-        throw new BadRequestException(
-          'Chunk preview input string must not be empty',
-        );
-      }
-
-      return normalized;
+      return this.assertNonEmptyText(input);
     }
 
-    if (input && typeof input === 'object') {
-      const payload = input;
-      const candidate =
-        isChunkPreviewPayload(payload) && typeof payload.text === 'string'
-          ? payload.text
-          : isChunkPreviewPayload(payload) &&
-              typeof payload.rawText === 'string'
-            ? payload.rawText
-            : null;
-
-      if (candidate && candidate.trim()) {
-        return candidate.trim();
-      }
+    if (this.isPreviewPayload(input)) {
+      return this.assertNonEmptyText(input.text ?? input.rawText ?? '');
     }
 
     throw new BadRequestException(
@@ -171,7 +123,9 @@ export class ChunkService {
   }
 
   async previewTranscriptChunks(rawText: string): Promise<ChunkBuildResult> {
-    if (!rawText.trim()) {
+    const normalizedText = rawText.replace(/\s+/g, ' ').trim();
+
+    if (!normalizedText) {
       return {
         strategy: 'fixed-word-fallback',
         chunks: [],
@@ -179,7 +133,8 @@ export class ChunkService {
     }
 
     try {
-      const semanticChunks = await this.buildSemanticChunks(rawText);
+      const semanticChunks = await this.buildSemanticChunks(normalizedText);
+
       if (semanticChunks.length > 0) {
         return {
           strategy: 'semantic',
@@ -188,21 +143,19 @@ export class ChunkService {
       }
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : 'Unknown chunking error';
+        error instanceof Error ? error.message : 'Unknown semantic error';
       this.logger.warn(
-        `Semantic chunking failed, falling back to fixed-size chunking: ${message}`,
+        `Semantic chunking failed. Falling back to fixed chunks: ${message}`,
       );
     }
 
     return {
       strategy: 'fixed-word-fallback',
-      chunks: this.buildFixedWordChunks(rawText),
+      chunks: this.buildFixedWordChunks(normalizedText),
     };
   }
 
-  async previewChunksFromVideo(
-    videoId: string,
-  ): Promise<ChunksFromVideoResult> {
+  async createFromVideo(videoId: string): Promise<ChunksFromVideoResult> {
     const transcript = await this.prisma.transcript.findFirst({
       where: {
         videoId,
@@ -219,19 +172,19 @@ export class ChunkService {
     }
 
     const result = await this.previewTranscriptChunks(transcript.rawText);
+    const chunks = await this.replaceTranscriptChunks(
+      videoId,
+      transcript.id,
+      result.chunks,
+    );
 
     return {
-      ...result,
       videoId,
       transcriptId: transcript.id,
-      source: transcript.source,
-      wordCount: transcript.wordCount ?? null,
+      strategy: result.strategy,
+      count: chunks.length,
+      chunks,
     };
-  }
-
-  async buildTranscriptChunks(rawText: string): Promise<GeneratedChunk[]> {
-    const result = await this.previewTranscriptChunks(rawText);
-    return result.chunks;
   }
 
   async ensureTranscriptChunks(
@@ -239,7 +192,7 @@ export class ChunkService {
     transcriptId: string,
     rawText: string,
   ) {
-    let storedChunks = await this.prisma.chunk.findMany({
+    const existing = await this.prisma.chunk.findMany({
       where: {
         transcriptId,
       },
@@ -248,64 +201,54 @@ export class ChunkService {
       },
     });
 
-    if (storedChunks.length > 0) {
-      await this.vectorStoreService.indexChunks(
-        storedChunks.map((chunk) => ({
-          id: chunk.id,
-          videoId: chunk.videoId,
-          transcriptId: chunk.transcriptId,
-          content: chunk.content,
-          chunkIndex: chunk.chunkIndex,
-          tokenCount: chunk.tokenCount,
-          startChar: chunk.startChar,
-          endChar: chunk.endChar,
-        })),
-      );
-
-      return storedChunks;
+    if (existing.length > 0) {
+      return existing;
     }
 
-    const generatedChunks = await this.buildTranscriptChunks(rawText);
+    const result = await this.previewTranscriptChunks(rawText);
+    return this.replaceTranscriptChunks(videoId, transcriptId, result.chunks);
+  }
 
-    if (generatedChunks.length === 0) {
-      return [];
-    }
+  async buildTranscriptChunks(rawText: string): Promise<GeneratedChunk[]> {
+    const result = await this.previewTranscriptChunks(rawText);
+    return result.chunks;
+  }
 
-    await this.prisma.chunk.createMany({
-      data: generatedChunks.map((chunk) => ({
-        videoId,
-        transcriptId,
-        content: chunk.content,
-        chunkIndex: chunk.chunkIndex,
-        tokenCount: chunk.tokenCount,
-        startChar: chunk.startChar,
-        endChar: chunk.endChar,
-      })),
+  private async replaceTranscriptChunks(
+    videoId: string,
+    transcriptId: string,
+    chunks: GeneratedChunk[],
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.chunk.deleteMany({
+        where: {
+          transcriptId,
+        },
+      });
+
+      if (chunks.length > 0) {
+        await tx.chunk.createMany({
+          data: chunks.map((chunk) => ({
+            videoId,
+            transcriptId,
+            content: chunk.content,
+            chunkIndex: chunk.chunkIndex,
+            tokenCount: chunk.tokenCount,
+            startChar: chunk.startChar,
+            endChar: chunk.endChar,
+          })),
+        });
+      }
+
+      return tx.chunk.findMany({
+        where: {
+          transcriptId,
+        },
+        orderBy: {
+          chunkIndex: 'asc',
+        },
+      });
     });
-
-    storedChunks = await this.prisma.chunk.findMany({
-      where: {
-        transcriptId,
-      },
-      orderBy: {
-        chunkIndex: 'asc',
-      },
-    });
-
-    await this.vectorStoreService.indexChunks(
-      storedChunks.map((chunk) => ({
-        id: chunk.id,
-        videoId: chunk.videoId,
-        transcriptId: chunk.transcriptId,
-        content: chunk.content,
-        chunkIndex: chunk.chunkIndex,
-        tokenCount: chunk.tokenCount,
-        startChar: chunk.startChar,
-        endChar: chunk.endChar,
-      })),
-    );
-
-    return storedChunks;
   }
 
   private async buildSemanticChunks(
@@ -313,14 +256,13 @@ export class ChunkService {
   ): Promise<GeneratedChunk[]> {
     const semanticChunking =
       (await import('semantic-chunking')) as SemanticChunkingModule;
-    const semanticSourceText =
-      this.prepareTranscriptForSemanticChunking(rawText);
-    const results = this.normalizeSemanticChunkResults(
+    const preparedText = this.prepareTranscriptForSemanticChunking(rawText);
+    const results = this.normalizeSemanticResults(
       await semanticChunking.chunkit(
         [
           {
             document_name: 'video-transcript',
-            document_text: semanticSourceText,
+            document_text: preparedText,
           },
         ],
         {
@@ -368,14 +310,12 @@ export class ChunkService {
       ),
     );
 
-    return this.mapSemanticResultsToGeneratedChunks(
-      semanticSourceText,
-      results,
-    );
+    return this.mapSemanticResultsToGeneratedChunks(preparedText, results);
   }
 
-  private prepareTranscriptForSemanticChunking(rawText: string) {
+  private prepareTranscriptForSemanticChunking(rawText: string): string {
     const normalized = rawText.replace(/\s+/g, ' ').trim();
+
     if (!normalized) {
       return normalized;
     }
@@ -385,17 +325,46 @@ export class ChunkService {
     }
 
     const words = normalized.split(/\s+/).filter(Boolean);
-    if (words.length <= 24) {
-      return `${normalized}.`;
-    }
-
     const sentences: string[] = [];
+
     for (let index = 0; index < words.length; index += 24) {
       const sentence = words.slice(index, index + 24).join(' ');
       sentences.push(sentence.endsWith('.') ? sentence : `${sentence}.`);
     }
 
     return sentences.join(' ');
+  }
+
+  private normalizeSemanticResults(results: unknown): SemanticChunkResult[] {
+    if (!Array.isArray(results)) {
+      return [];
+    }
+
+    const normalized: SemanticChunkResult[] = [];
+
+    for (const result of results) {
+      if (typeof result !== 'object' || result === null) {
+        continue;
+      }
+
+      const record = result as Record<string, unknown>;
+      const text = typeof record.text === 'string' ? record.text : undefined;
+      const tokenLength =
+        typeof record.token_length === 'number'
+          ? record.token_length
+          : undefined;
+
+      if (!text) {
+        continue;
+      }
+
+      normalized.push({
+        text,
+        token_length: tokenLength,
+      });
+    }
+
+    return normalized;
   }
 
   private mapSemanticResultsToGeneratedChunks(
@@ -406,7 +375,8 @@ export class ChunkService {
     let cursor = 0;
 
     for (const result of results) {
-      const content = result.text?.trim();
+      const content = result.text?.replace(/\s+/g, ' ').trim();
+
       if (!content) {
         continue;
       }
@@ -428,63 +398,29 @@ export class ChunkService {
     return chunks;
   }
 
-  private normalizeSemanticChunkResults(
-    results: unknown,
-  ): SemanticChunkResult[] {
-    const chunkResults: unknown[] = Array.isArray(results) ? results : [];
-    const normalized: SemanticChunkResult[] = [];
-
-    for (const result of chunkResults) {
-      if (typeof result !== 'object' || result === null) {
-        continue;
-      }
-
-      const record = result as Record<string, unknown>;
-      const text = typeof record.text === 'string' ? record.text : undefined;
-      const tokenLength =
-        typeof record.token_length === 'number'
-          ? record.token_length
-          : undefined;
-
-      if (text === undefined && tokenLength === undefined) {
-        continue;
-      }
-
-      normalized.push({
-        text,
-        token_length: tokenLength,
-      });
-    }
-
-    return normalized;
-  }
-
-  private findChunkStart(rawText: string, content: string, cursor: number) {
-    const exactMatch = rawText.indexOf(content, cursor);
-    if (exactMatch !== -1) {
-      return exactMatch;
-    }
-
-    return rawText.indexOf(content);
-  }
-
   private buildFixedWordChunks(rawText: string): GeneratedChunk[] {
-    const maxWords = 180;
     const words = rawText.split(/\s+/).filter(Boolean);
     const chunks: GeneratedChunk[] = [];
     let cursor = 0;
 
-    for (let index = 0; index < words.length; index += maxWords) {
-      const content = words.slice(index, index + maxWords).join(' ');
-      const startChar = rawText.indexOf(content.split(' ')[0], cursor);
-      const endChar = startChar + content.length;
+    for (
+      let index = 0;
+      index < words.length;
+      index += this.fixedChunkMaxWords
+    ) {
+      const content = words
+        .slice(index, index + this.fixedChunkMaxWords)
+        .join(' ');
+      const startChar = this.findChunkStart(rawText, content, cursor);
+      const safeStartChar = Math.max(startChar, 0);
+      const endChar = safeStartChar + content.length;
       cursor = endChar;
 
       chunks.push({
         content,
         chunkIndex: chunks.length,
         tokenCount: this.countWords(content),
-        startChar: Math.max(startChar, 0),
+        startChar: safeStartChar,
         endChar,
       });
     }
@@ -492,19 +428,55 @@ export class ChunkService {
     return chunks;
   }
 
-  private countWords(text: string) {
+  private findChunkStart(rawText: string, content: string, cursor: number) {
+    const exactMatch = rawText.indexOf(content, cursor);
+
+    if (exactMatch !== -1) {
+      return exactMatch;
+    }
+
+    const firstWords = content.split(/\s+/).slice(0, 8).join(' ');
+    const partialMatch = rawText.indexOf(firstWords, cursor);
+
+    if (partialMatch !== -1) {
+      return partialMatch;
+    }
+
+    return rawText.indexOf(content);
+  }
+
+  private assertNonEmptyText(value: string): string {
+    const text = value.trim();
+
+    if (!text) {
+      throw new BadRequestException('Chunk input must not be empty');
+    }
+
+    return text;
+  }
+
+  private isPreviewPayload(value: unknown): value is PreviewPayload {
+    return (
+      typeof value === 'object' &&
+      value !== null &&
+      ('text' in value || 'rawText' in value)
+    );
+  }
+
+  private countWords(text: string): number {
     return text.split(/\s+/).filter(Boolean).length;
   }
 
-  private getModelCacheDir() {
+  private getModelCacheDir(): string {
     return this.configService.get<string>(
       'SEMANTIC_CHUNKING_MODEL_CACHE_DIR',
       join(process.cwd(), 'models', 'semantic-chunking'),
     );
   }
 
-  private getNumberConfig(key: string, fallback: number) {
+  private getNumberConfig(key: string, fallback: number): number {
     const value = this.configService.get<string | number>(key);
+
     if (value === undefined || value === null || value === '') {
       return fallback;
     }

@@ -1,7 +1,6 @@
 export type VideoStatus = 'pending' | 'processing' | 'completed' | 'failed';
 export type MessageRole = 'user' | 'assistant';
 export type QuizOption = 'A' | 'B' | 'C' | 'D';
-export type FlashcardStudyStatus = 'pending' | 'known' | 'unknown';
 export type CheckResult = 'correct' | 'incorrect';
 export type RetrievedSource = 'chunk' | 'memory';
 
@@ -114,59 +113,6 @@ export interface CheckAnswerResult {
   result: CheckResult;
   feedback: string;
   explanation: string | null;
-}
-
-export interface FlashcardSet {
-  id: string;
-  videoId: string | null;
-  projectId: string | null;
-  title: string | null;
-  totalCards: number;
-  modelUsed: string | null;
-  flashcards: Flashcard[];
-  createdAt: string;
-}
-
-export interface Flashcard {
-  id: string;
-  setId: string;
-  front: string;
-  back: string;
-  cardIndex: number;
-  sourceChunkId: string | null;
-}
-
-export interface FlashcardStudyState {
-  id: string;
-  title: string | null;
-  videoId: string | null;
-  projectId: string | null;
-  totalCards: number;
-  modelUsed: string | null;
-  completed: boolean;
-  currentCard: FlashcardStudyCard | null;
-  stats: FlashcardStudyStats;
-  cards: FlashcardStudyCard[];
-}
-
-export interface FlashcardStudyCard {
-  id: string;
-  cardIndex: number;
-  front: string;
-  back: string;
-  sourceChunkId: string | null;
-  status: FlashcardStudyStatus;
-  reviewCount: number;
-  lastReviewedAt: string | null;
-  isCurrent: boolean;
-}
-
-export interface FlashcardStudyStats {
-  known: number;
-  unknown: number;
-  remaining: number;
-  reviewed: number;
-  total: number;
 }
 
 export interface Project {

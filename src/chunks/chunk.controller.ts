@@ -5,33 +5,24 @@ import {
   Get,
   Param,
   ParseUUIDPipe,
-  Patch,
   Post,
   Query,
 } from '@nestjs/common';
 import { ChunkService } from './chunk.service';
-import { CreateChunkDto } from './dto/create-chunk.dto';
-import { UpdateChunkDto } from './dto/update-chunk.dto';
 
 @Controller('chunks')
 export class ChunkController {
   constructor(private readonly chunkService: ChunkService) {}
 
-  @Post()
-  create(@Body() createChunkDto: CreateChunkDto) {
-    return this.chunkService.create(createChunkDto);
-  }
-
   @Post('preview')
-  preview(@Body() previewChunkInput: unknown) {
-    const normalizedText =
-      this.chunkService.normalizeChunkPreviewInput(previewChunkInput);
-    return this.chunkService.previewTranscriptChunks(normalizedText);
+  preview(@Body() input: unknown) {
+    const text = this.chunkService.normalizePreviewInput(input);
+    return this.chunkService.previewTranscriptChunks(text);
   }
 
   @Post('from-video/:videoId')
-  previewFromVideo(@Param('videoId', ParseUUIDPipe) videoId: string) {
-    return this.chunkService.previewChunksFromVideo(videoId);
+  createFromVideo(@Param('videoId', ParseUUIDPipe) videoId: string) {
+    return this.chunkService.createFromVideo(videoId);
   }
 
   @Get()
@@ -45,14 +36,6 @@ export class ChunkController {
   @Get(':id')
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.chunkService.findOne(id);
-  }
-
-  @Patch(':id')
-  update(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Body() updateChunkDto: UpdateChunkDto,
-  ) {
-    return this.chunkService.update(id, updateChunkDto);
   }
 
   @Delete(':id')

@@ -76,7 +76,7 @@ export default function HomePage() {
           </h2>
           <p className="mt-2 text-ink-dim text-base font-body leading-relaxed">
             Nhập một URL YouTube. AI sẽ trích xuất nội dung, tạo tóm tắt, câu hỏi trắc nghiệm,
-            flashcard, và chatbot để bạn học hiệu quả.
+            và chatbot để bạn học hiệu quả.
           </p>
         </div>
 

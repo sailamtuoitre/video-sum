@@ -7,10 +7,7 @@ import type {
   AskResponse,
   Quiz,
   CheckAnswerResult,
-  FlashcardSet,
-  FlashcardStudyState,
   QuizOption,
-  FlashcardStudyStatus,
   Project,
   ProjectWithVideos,
 } from '../types';
@@ -82,28 +79,6 @@ export const api = {
     client.post<CheckAnswerResult>(`/quiz-questions/${questionId}/check-answer`, {
       selectedOption,
     }).then((r) => r.data),
-
-  // Flashcard Sets
-  generateFlashcards: (videoId: string) =>
-    client.post<FlashcardSet>(`/flashcard-sets/from-video/${videoId}`).then((r) => r.data),
-
-  getFlashcardSet: (videoId: string) =>
-    client.get<FlashcardSet[]>('/flashcard-sets', { params: { videoId } }).then((r) => {
-      const data = r.data;
-      return Array.isArray(data) ? data[0] ?? null : data;
-    }),
-
-  getStudyState: (setId: string) =>
-    client.get<FlashcardStudyState>(`/flashcard-sets/${setId}/study`).then((r) => r.data),
-
-  reviewCard: (setId: string, flashcardId: string, status: FlashcardStudyStatus) =>
-    client.post<FlashcardStudyState>(`/flashcard-sets/${setId}/study/review`, {
-      flashcardId,
-      status,
-    }).then((r) => r.data),
-
-  resetStudy: (setId: string) =>
-    client.post<FlashcardStudyState>(`/flashcard-sets/${setId}/study/reset`).then((r) => r.data),
 
   // Projects
   getProjects: () =>

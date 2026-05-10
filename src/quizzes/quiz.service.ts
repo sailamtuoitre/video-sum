@@ -1,106 +1,85 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { GroqGatewayService } from '../groq-gateway/groq-gateway.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateQuizDto } from './dto/create-quiz.dto';
-import { UpdateQuizDto } from './dto/update-quiz.dto';
+import { SummaryService } from '../summaries/summary.service';
 
-type SummaryRecord = {
+type QuizOption = 'A' | 'B' | 'C' | 'D';
+
+type SummaryInput = {
   keyPoints: unknown;
   simplifiedText: string;
   mainTopics: unknown;
   modelUsed: string | null;
 };
 
-type QuizQuestionInput = {
+type MiniTestQuestion = {
   questionText: string;
-  options: Record<string, string>;
-  correctOption: 'A' | 'B' | 'C' | 'D';
+  options: Record<QuizOption, string>;
+  correctOption: QuizOption;
   explanation: string;
   questionIndex: number;
+  sourceChunkId: string | null;
 };
 
-type QuizSource = {
-  label: string;
-  answer: string;
-  context: string;
-};
-
-type AiQuizQuestion = {
-  questionText: string;
-  options: Record<string, string>;
-  correctOption: 'A' | 'B' | 'C' | 'D';
-  explanation: string;
-};
-
-type AiQuizPayload = {
-  title?: string;
-  modelUsed?: string;
-  questions: AiQuizQuestion[];
+type QuestionSource = {
+  kind: 'chunk' | 'keyPoint' | 'topic' | 'sentence';
+  text: string;
+  sourceChunkId: string | null;
 };
 
 @Injectable()
 export class QuizService {
-  private readonly logger = new Logger(QuizService.name);
+  private readonly totalQuestions = 10;
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly configService: ConfigService,
-    private readonly groqGateway: GroqGatewayService,
+    private readonly summaryService: SummaryService,
   ) {}
 
-  async create(createQuizDto: CreateQuizDto) {
-    try {
-      return await this.prisma.quiz.create({
-        data: createQuizDto,
-      });
-    } catch (error) {
-      this.handlePrismaError(error, createQuizDto.videoId);
-    }
-  }
-
   async createFromVideo(videoId: string) {
-    const summary = await this.prisma.summary.findUnique({
+    const video = await this.prisma.video.findUnique({
       where: {
-        videoId,
+        id: videoId,
+      },
+      select: {
+        id: true,
+        title: true,
       },
     });
 
-    if (!summary) {
-      throw new NotFoundException('video không tồn tại');
+    if (!video) {
+      throw new NotFoundException(`Video with id "${videoId}" not found`);
     }
 
-    const summaryRecord = summary as SummaryRecord;
-    const quizData = await this.buildQuizDataFromSummary(
-      videoId,
-      summaryRecord,
-    );
+    const summary = await this.ensureSummary(videoId);
+    const sourceChunks = await this.findSourceChunks(videoId);
+    const questions = this.buildMiniTestQuestions(summary, sourceChunks);
 
     return this.prisma.$transaction(async (tx) => {
-      const createdQuiz = await tx.quiz.create({
+      const quiz = await tx.quiz.create({
         data: {
           videoId,
-          title: quizData.title,
-          totalQuestions: quizData.questions.length,
-          modelUsed: quizData.modelUsed,
+          title: video.title ? `Mini test: ${video.title}` : 'Mini test',
+          totalQuestions: questions.length,
+          modelUsed: 'summary-rule-minitest-v1',
         },
       });
 
       await tx.quizQuestion.createMany({
-        data: quizData.questions.map((question) => ({
-          quizId: createdQuiz.id,
+        data: questions.map((question) => ({
+          quizId: quiz.id,
           questionText: question.questionText,
           options: question.options,
           correctOption: question.correctOption,
           explanation: question.explanation,
           questionIndex: question.questionIndex,
+          sourceChunkId: question.sourceChunkId,
         })),
       });
 
       return tx.quiz.findUnique({
         where: {
-          id: createdQuiz.id,
+          id: quiz.id,
         },
         include: {
           questions: {
@@ -116,6 +95,13 @@ export class QuizService {
   findAll(videoId?: string) {
     return this.prisma.quiz.findMany({
       where: videoId ? { videoId } : undefined,
+      include: {
+        questions: {
+          orderBy: {
+            questionIndex: 'asc',
+          },
+        },
+      },
       orderBy: {
         createdAt: 'desc',
       },
@@ -127,6 +113,13 @@ export class QuizService {
       where: {
         id,
       },
+      include: {
+        questions: {
+          orderBy: {
+            questionIndex: 'asc',
+          },
+        },
+      },
     });
 
     if (!quiz) {
@@ -134,19 +127,6 @@ export class QuizService {
     }
 
     return quiz;
-  }
-
-  async update(id: string, updateQuizDto: UpdateQuizDto) {
-    try {
-      return await this.prisma.quiz.update({
-        where: {
-          id,
-        },
-        data: updateQuizDto,
-      });
-    } catch (error) {
-      this.handlePrismaError(error, id);
-    }
   }
 
   async remove(id: string) {
@@ -157,470 +137,224 @@ export class QuizService {
         },
       });
     } catch (error) {
-      this.handlePrismaError(error, id);
-    }
-  }
-
-  private async buildQuizDataFromSummary(
-    videoId: string,
-    summary: SummaryRecord,
-  ) {
-    const aiQuizData = await this.tryBuildAiQuizDataFromSummary(summary);
-    if (aiQuizData) {
-      const fallbackQuizData = this.buildRuleBasedQuizDataFromSummary(
-        videoId,
-        summary,
-      );
-      const questions = aiQuizData.questions
-        .slice(0, 10)
-        .map((question, index) => ({
-          questionText: question.questionText,
-          options: question.options,
-          correctOption: question.correctOption,
-          explanation: question.explanation,
-          questionIndex: index,
-        }));
-
-      while (questions.length < 10) {
-        const fallbackQuestion = fallbackQuizData.questions[questions.length];
-        if (!fallbackQuestion) {
-          break;
-        }
-
-        questions.push({
-          questionText: fallbackQuestion.questionText,
-          options: fallbackQuestion.options,
-          correctOption: fallbackQuestion.correctOption,
-          explanation: fallbackQuestion.explanation,
-          questionIndex: questions.length,
-        });
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2025'
+      ) {
+        throw new NotFoundException(`Quiz with id "${id}" not found`);
       }
 
-      return {
-        title: aiQuizData.title ?? 'Quiz from summary',
-        modelUsed: aiQuizData.modelUsed ?? 'ai-summary-mcq',
-        questions,
-      };
+      throw error;
     }
-
-    return this.buildRuleBasedQuizDataFromSummary(videoId, summary);
   }
 
-  private buildRuleBasedQuizDataFromSummary(
-    videoId: string,
-    summary: SummaryRecord,
-  ) {
+  private async ensureSummary(videoId: string): Promise<SummaryInput> {
+    const existing = await this.prisma.summary.findUnique({
+      where: {
+        videoId,
+      },
+    });
+
+    if (existing) {
+      return existing;
+    }
+
+    return this.summaryService.createFromVideo(videoId);
+  }
+
+  private async findSourceChunks(videoId: string) {
+    const transcript = await this.prisma.transcript.findFirst({
+      where: {
+        videoId,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    if (!transcript) {
+      return [];
+    }
+
+    return this.prisma.chunk.findMany({
+      where: {
+        transcriptId: transcript.id,
+      },
+      orderBy: {
+        chunkIndex: 'asc',
+      },
+    });
+  }
+
+  private buildMiniTestQuestions(
+    summary: SummaryInput,
+    sourceChunks: Awaited<ReturnType<PrismaService['chunk']['findMany']>>,
+  ): MiniTestQuestion[] {
     const keyPoints = this.normalizeStringArray(summary.keyPoints);
     const mainTopics = this.normalizeStringArray(summary.mainTopics);
-    const simplifiedSentences = this.splitIntoSentences(summary.simplifiedText);
-
-    const questionSources = this.buildQuestionSources(
+    const sentences = this.splitSentences(summary.simplifiedText);
+    const sources = this.buildQuestionSources(
       keyPoints,
       mainTopics,
-      simplifiedSentences,
+      sentences,
+      sourceChunks,
     );
+    const questions: MiniTestQuestion[] = [];
 
-    const questions = questionSources
-      .slice(0, 10)
-      .map((source, index) => this.buildMultipleChoiceQuestion(source, index));
-
-    while (questions.length < 10) {
-      const fallbackText =
-        simplifiedSentences[
-          questions.length % Math.max(simplifiedSentences.length, 1)
-        ] ??
-        summary.simplifiedText ??
-        `Nội dung chính của video ${videoId}`;
-
-      questions.push(
-        this.buildMultipleChoiceQuestion(
-          {
-            label: fallbackText,
-            answer: fallbackText,
-            context: summary.simplifiedText,
-          },
-          questions.length,
-        ),
-      );
+    for (let index = 0; index < this.totalQuestions; index += 1) {
+      const source = sources[index % sources.length];
+      questions.push(this.buildQuestion(source, index, sources));
     }
 
-    return {
-      title: 'Quiz from summary',
-      modelUsed: summary.modelUsed ?? 'summary-based-mcq',
-      questions,
-    };
-  }
-
-  private async tryBuildAiQuizDataFromSummary(summary: SummaryRecord) {
-    if (!this.groqGateway.hasKeys()) {
-      return null;
-    }
-
-    const modelCandidates = this.buildQuizModelCandidates();
-    const primaryModel = modelCandidates[0];
-    const fallbackModels = modelCandidates.slice(1);
-
-    const result = await this.groqGateway.chatCompletion({
-      model: primaryModel,
-      fallbackModels,
-      messages: this.buildAiQuizMessages(summary),
-      maxTokens: 3200,
-    });
-
-    if (!result) {
-      return null;
-    }
-
-    const parsed = this.parseAiQuizPayload(result.content);
-    if (parsed) {
-      return {
-        ...parsed,
-        modelUsed: parsed.modelUsed ?? result.modelUsed,
-      };
-    }
-
-    return null;
-  }
-
-  private parseAiQuizPayload(content: string): AiQuizPayload | null {
-    const jsonText = this.extractJsonFromText(content);
-
-    try {
-      const parsed = JSON.parse(jsonText) as Record<string, unknown>;
-      const questions = Array.isArray(parsed.questions)
-        ? parsed.questions
-            .map((question) => this.normalizeAiQuizQuestion(question))
-            .filter((question): question is AiQuizQuestion => question !== null)
-        : [];
-
-      if (questions.length === 0) {
-        return null;
-      }
-
-      return {
-        title:
-          typeof parsed.title === 'string' ? parsed.title.trim() : undefined,
-        modelUsed:
-          typeof parsed.modelUsed === 'string'
-            ? parsed.modelUsed.trim()
-            : undefined,
-        questions,
-      };
-    } catch {
-      return null;
-    }
-  }
-
-  private normalizeAiQuizQuestion(value: unknown): AiQuizQuestion | null {
-    if (!value || typeof value !== 'object') {
-      return null;
-    }
-
-    const record = value as Record<string, unknown>;
-    const questionText =
-      typeof record.questionText === 'string' ? record.questionText.trim() : '';
-    const explanation =
-      typeof record.explanation === 'string' ? record.explanation.trim() : '';
-    const correctOption = record.correctOption;
-    const options = record.options;
-
-    if (!questionText || !explanation) {
-      return null;
-    }
-
-    if (
-      correctOption !== 'A' &&
-      correctOption !== 'B' &&
-      correctOption !== 'C' &&
-      correctOption !== 'D'
-    ) {
-      return null;
-    }
-
-    if (!options || typeof options !== 'object') {
-      return null;
-    }
-
-    const optionRecord = options as Record<string, unknown>;
-    const normalizedOptions = {
-      A:
-        typeof optionRecord.A === 'string'
-          ? optionRecord.A.trim()
-          : typeof optionRecord.a === 'string'
-            ? optionRecord.a.trim()
-            : '',
-      B:
-        typeof optionRecord.B === 'string'
-          ? optionRecord.B.trim()
-          : typeof optionRecord.b === 'string'
-            ? optionRecord.b.trim()
-            : '',
-      C:
-        typeof optionRecord.C === 'string'
-          ? optionRecord.C.trim()
-          : typeof optionRecord.c === 'string'
-            ? optionRecord.c.trim()
-            : '',
-      D:
-        typeof optionRecord.D === 'string'
-          ? optionRecord.D.trim()
-          : typeof optionRecord.d === 'string'
-            ? optionRecord.d.trim()
-            : '',
-    };
-
-    if (
-      !normalizedOptions.A ||
-      !normalizedOptions.B ||
-      !normalizedOptions.C ||
-      !normalizedOptions.D
-    ) {
-      return null;
-    }
-
-    return {
-      questionText,
-      options: normalizedOptions,
-      correctOption,
-      explanation,
-    };
-  }
-
-  private extractJsonFromText(content: string) {
-    const trimmed = content.trim();
-
-    if (trimmed.startsWith('```')) {
-      return trimmed
-        .replace(/^```json\s*/i, '')
-        .replace(/^```\s*/i, '')
-        .replace(/```$/i, '')
-        .trim();
-    }
-
-    const firstBrace = trimmed.indexOf('{');
-    const lastBrace = trimmed.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-      return trimmed.slice(firstBrace, lastBrace + 1);
-    }
-
-    return trimmed;
-  }
-
-  private buildQuizModelCandidates() {
-    return this.uniqueStrings([
-      this.configService.get<string>('QUIZ_GENERATION_MODEL')?.trim(),
-      this.configService.get<string>('GROQ_CHAT_MODEL')?.trim(),
-      'llama-3.1-8b-instant',
-      'llama-3.3-70b-versatile',
-    ]);
-  }
-
-  private uniqueStrings(values: Array<string | undefined | null>) {
-    const seen = new Set<string>();
-    const result: string[] = [];
-
-    for (const value of values) {
-      const normalized = value?.trim();
-      if (!normalized || seen.has(normalized)) {
-        continue;
-      }
-
-      seen.add(normalized);
-      result.push(normalized);
-    }
-
-    return result;
-  }
-
-  private buildAiQuizMessages(summary: SummaryRecord) {
-    return [
-      {
-        role: 'system',
-        content: this.buildAiQuizSystemPrompt(),
-      },
-      {
-        role: 'user',
-        content: this.buildAiQuizUserPrompt(summary),
-      },
-    ];
-  }
-
-  private buildAiQuizSystemPrompt() {
-    return [
-      'Bạn là người biên soạn câu hỏi trắc nghiệm cho video học tập tiếng Việt, domain chính là toán học.',
-      'Nhiệm vụ của bạn là biến summary thành câu hỏi tự nhiên, rõ nghĩa, và tuyệt đối không bịa dữ kiện ngoài summary.',
-      'Chỉ được dùng thông tin đã xuất hiện trực tiếp trong summary: định nghĩa, công thức, ký hiệu, bước giải, nhận xét, ví dụ, kết luận, và mối quan hệ đã nêu rõ.',
-      'Không tự thêm số liệu mới, không tự thay đổi giả thiết, không tự suy diễn công thức mới, không tự tạo bước giải không có trong summary.',
-      'Nếu summary chưa đủ chi tiết cho câu hỏi tính toán, hãy ưu tiên câu hỏi về khái niệm, định nghĩa, nhận dạng công thức, hoặc vai trò của một bước trong lời giải.',
-      'Hãy chia câu hỏi theo đúng dạng toán nếu summary cho phép nhận diện.',
-      'Dạng đại số: chỉ hỏi về biểu thức, phương trình, bất phương trình, biến số, phép biến đổi, nhân tử, nghiệm, điều kiện, hoặc các bước giải đã nêu.',
-      'Dạng hình học: chỉ hỏi về điểm, đoạn thẳng, góc, tam giác, tứ giác, đường tròn, quan hệ song song/vuông góc, định lý, chu vi, diện tích, hoặc dữ kiện hình học đã nêu.',
-      'Dạng xác suất và thống kê: chỉ hỏi về biến cố, không gian mẫu, xác suất, tần số, trung bình, trung vị, mốt, hoặc cách tính đã nêu trong summary.',
-      'Nếu summary không đủ để nhận diện rõ một dạng toán, hãy tạo câu hỏi tổng quát nhưng vẫn bám sát nội dung thật có trong summary.',
-      'Mỗi câu hỏi phải kiểm tra đúng một ý riêng, không hỏi nhập nhằng, không ghép nhiều ý vào một câu.',
-      'Distractors phải hợp lý, gần nghĩa, nhưng chỉ một đáp án đúng duy nhất và phải kiểm chứng được từ summary.',
-      'Tránh lặp kiểu hỏi, tránh câu hỏi quá máy móc, tránh câu hỏi mà hai đáp án đều có thể đúng.',
-      'Độ khó nên pha trộn: 3 câu dễ, 4 câu trung bình, 3 câu khó vừa, nhưng luôn bám sát dữ kiện có sẵn.',
-      'Trả về CHỈ JSON hợp lệ, không markdown, không giải thích ngoài JSON.',
-      'Schema bắt buộc:',
-      '{"title":string,"modelUsed":string,"questions":[{"questionText":string,"options":{"A":string,"B":string,"C":string,"D":string},"correctOption":"A"|"B"|"C"|"D","explanation":string}]}',
-      'Phải đúng 10 câu hỏi.',
-    ].join(' ');
-  }
-
-  private buildAiQuizUserPrompt(summary: SummaryRecord) {
-    return JSON.stringify({
-      videoSummary: {
-        keyPoints: this.normalizeStringArray(summary.keyPoints),
-        simplifiedText: summary.simplifiedText,
-        mainTopics: this.normalizeStringArray(summary.mainTopics),
-      },
-      instructions: {
-        language: 'vi',
-        totalQuestions: 10,
-        style:
-          'natural, specific, classroom-friendly, math-focused, domain-aware',
-        truthRule: 'Only use facts explicitly present in the summary.',
-        antiHallucinationRule:
-          'Do not invent numbers, formulas, symbols, steps, shapes, events, or statistics not found in the summary.',
-        coverage: [
-          'algebra concepts, expressions, equations, variables, and solution steps if present',
-          'geometry concepts, shapes, angles, lengths, areas, theorems, and relations if present',
-          'probability and statistics concepts, sample spaces, events, probabilities, and measures if present',
-          'definitions and interpretations explicitly mentioned in the summary',
-          'solution steps or reasoning steps explicitly mentioned in the summary',
-          'direct inference from the summary only',
-        ],
-        outputRules: [
-          'Each question must be answerable from the summary only.',
-          'If the summary does not contain enough detail for a computation question, ask about the concept, definition, or step instead.',
-          'Do not introduce diagrams, formulas, or numerical values that are not explicitly in the summary.',
-          'Keep options balanced in length and plausibility.',
-          'Do not reuse the exact same wording across many questions.',
-          'Use concise explanations that justify why the correct option is right using only summary content.',
-        ],
-      },
-      outputExample: {
-        title: 'Quiz từ summary',
-        modelUsed: 'ai-summary-mcq',
-        questions: [
-          {
-            questionText: '...',
-            options: {
-              A: '...',
-              B: '...',
-              C: '...',
-              D: '...',
-            },
-            correctOption: 'A',
-            explanation: '...',
-          },
-        ],
-      },
-    });
+    return questions;
   }
 
   private buildQuestionSources(
     keyPoints: string[],
     mainTopics: string[],
-    simplifiedSentences: string[],
-  ): QuizSource[] {
-    const sources: QuizSource[] = [];
+    sentences: string[],
+    sourceChunks: Awaited<ReturnType<PrismaService['chunk']['findMany']>>,
+  ): QuestionSource[] {
+    const sources: QuestionSource[] = [
+      ...sourceChunks.slice(0, 10).map((chunk) => ({
+        kind: 'chunk' as const,
+        text: chunk.content,
+        sourceChunkId: chunk.id,
+      })),
+      ...keyPoints.map((text) => ({
+        kind: 'keyPoint' as const,
+        text,
+        sourceChunkId: this.findMatchingChunkId(text, sourceChunks),
+      })),
+      ...mainTopics.map((text) => ({
+        kind: 'topic' as const,
+        text,
+        sourceChunkId: this.findMatchingChunkId(text, sourceChunks),
+      })),
+      ...sentences.map((text) => ({
+        kind: 'sentence' as const,
+        text,
+        sourceChunkId: this.findMatchingChunkId(text, sourceChunks),
+      })),
+    ].filter((source) => source.text.length > 0);
 
-    for (const point of keyPoints) {
-      sources.push({
-        label: point,
-        answer: point,
-        context: simplifiedSentences.join(' '),
-      });
+    if (sources.length > 0) {
+      return this.dedupeSources(sources);
     }
 
-    for (const topic of mainTopics) {
-      sources.push({
-        label: topic,
-        answer: topic,
-        context: simplifiedSentences.join(' '),
-      });
-    }
-
-    for (const sentence of simplifiedSentences) {
-      sources.push({
-        label: sentence,
-        answer: sentence,
-        context: simplifiedSentences.join(' '),
-      });
-    }
-
-    return sources.length > 0
-      ? sources
-      : [
-          {
-            label: 'Nội dung chính của video',
-            answer: 'Nội dung chính của video',
-            context: 'Nội dung chính của video',
-          },
-        ];
+    return [
+      {
+        kind: 'sentence',
+        text: 'Nội dung chính của video',
+        sourceChunkId: null,
+      },
+    ];
   }
 
-  private buildMultipleChoiceQuestion(
-    source: QuizSource,
+  private buildQuestion(
+    source: QuestionSource,
     index: number,
-  ): QuizQuestionInput {
+    allSources: QuestionSource[],
+  ): MiniTestQuestion {
     const correctOption = this.pickCorrectOption(index);
-    const distractors = this.buildDistractors(source.answer, source.context);
-    const options = this.buildOptions(
+    const correctAnswer = this.answerForSource(source);
+    const distractors = this.buildDistractors(correctAnswer, index, allSources);
+    const options = this.placeCorrectAnswer(
       correctOption,
-      source.answer,
+      correctAnswer,
       distractors,
     );
 
     return {
-      questionText: this.buildQuestionText(source.label, index),
+      questionText: this.questionTextForSource(source, index),
       options,
       correctOption,
-      explanation: `Đáp án đúng là ${correctOption} vì nội dung này được rút ra từ summary của video.`,
+      explanation: this.explanationForSource(source, correctOption),
       questionIndex: index,
+      sourceChunkId: source.sourceChunkId,
     };
   }
 
-  private buildQuestionText(label: string, index: number) {
-    const templates = [
-      `Câu ${index + 1}: Ý nào phù hợp nhất với nội dung sau: ${label}?`,
-      `Câu ${index + 1}: Nội dung nào đúng nhất về ý này: ${label}?`,
-      `Câu ${index + 1}: Chọn đáp án mô tả đúng nhất: ${label}?`,
-      `Câu ${index + 1}: Phần nào sau đây khớp với ý chính: ${label}?`,
-    ];
+  private questionTextForSource(source: QuestionSource, index: number): string {
+    if (source.kind === 'chunk') {
+      return `Câu ${index + 1}: Nội dung nào được transcript video hỗ trợ rõ ràng nhất?`;
+    }
 
-    return templates[index % templates.length];
+    if (source.kind === 'topic') {
+      return `Câu ${index + 1}: Chủ đề nào được nhắc đến trong video?`;
+    }
+
+    if (source.kind === 'keyPoint') {
+      return `Câu ${index + 1}: Ý nào sau đây là một ý chính của video?`;
+    }
+
+    return `Câu ${index + 1}: Nội dung nào phù hợp nhất với phần tóm tắt video?`;
   }
 
-  private buildDistractors(answer: string, context: string) {
-    const baseWords = this.splitWords(`${answer} ${context}`);
-    const fallbackWords = [
-      'phân tích',
-      'ngẫu nhiên',
-      'ví dụ',
-      'không liên quan',
-    ];
-
-    const distractors = [
-      this.mutateAnswer(answer, baseWords[0] ?? fallbackWords[0]),
-      this.mutateAnswer(answer, baseWords[1] ?? fallbackWords[1]),
-      this.mutateAnswer(answer, baseWords[2] ?? fallbackWords[2]),
-    ];
-
-    return this.ensureUniqueAnswers([answer, ...distractors], fallbackWords);
+  private answerForSource(source: QuestionSource): string {
+    return this.truncateWords(source.text, 28);
   }
 
-  private buildOptions(
-    correctOption: 'A' | 'B' | 'C' | 'D',
-    answer: string,
+  private explanationForSource(
+    source: QuestionSource,
+    correctOption: QuizOption,
+  ): string {
+    if (source.kind === 'chunk') {
+      return `Đáp án ${correctOption} đúng vì nội dung này được hỗ trợ trực tiếp bởi một chunk transcript của video.`;
+    }
+
+    if (source.kind === 'topic') {
+      return `Đáp án ${correctOption} đúng vì chủ đề này xuất hiện trong phần chủ đề chính của summary.`;
+    }
+
+    if (source.kind === 'keyPoint') {
+      return `Đáp án ${correctOption} đúng vì đây là một ý chính được rút ra từ summary của video.`;
+    }
+
+    return `Đáp án ${correctOption} đúng vì nội dung này khớp với phần giải thích/tóm tắt của video.`;
+  }
+
+  private buildDistractors(
+    correctAnswer: string,
+    index: number,
+    allSources: QuestionSource[],
+  ): string[] {
+    const candidates = allSources
+      .map((source) => this.truncateWords(source.text, 22))
+      .filter(
+        (candidate) =>
+          candidate.length > 0 &&
+          this.normalizeForCompare(candidate) !==
+            this.normalizeForCompare(correctAnswer),
+      );
+
+    const defaults = [
+      'Một nội dung không được nêu trong summary',
+      'Một bước giải không liên quan đến video',
+      'Một kết luận không dựa trên nội dung đã học',
+      'Một ví dụ nằm ngoài phần tóm tắt',
+      'Một chủ đề khác với trọng tâm video',
+    ];
+
+    return this.uniqueOptions([
+      ...candidates.slice(index, index + 3),
+      ...candidates.slice(0, 3),
+      ...defaults,
+    ]).slice(0, 3);
+  }
+
+  private placeCorrectAnswer(
+    correctOption: QuizOption,
+    correctAnswer: string,
     distractors: string[],
-  ) {
-    const letters: Array<'A' | 'B' | 'C' | 'D'> = ['A', 'B', 'C', 'D'];
+  ): Record<QuizOption, string> {
+    const letters: QuizOption[] = ['A', 'B', 'C', 'D'];
     const ordered = [...distractors];
-    const correctIndex = letters.indexOf(correctOption);
-    ordered.splice(correctIndex, 0, answer);
+    ordered.splice(letters.indexOf(correctOption), 0, correctAnswer);
+
+    while (ordered.length < 4) {
+      ordered.push(`Lựa chọn phụ ${ordered.length + 1}`);
+    }
 
     return {
       A: ordered[0],
@@ -630,24 +364,17 @@ export class QuizService {
     };
   }
 
-  private pickCorrectOption(index: number): 'A' | 'B' | 'C' | 'D' {
-    return ['A', 'B', 'C', 'D'][index % 4] as 'A' | 'B' | 'C' | 'D';
+  private pickCorrectOption(index: number): QuizOption {
+    const options: QuizOption[] = ['A', 'B', 'C', 'D'];
+    return options[index % options.length];
   }
 
-  private mutateAnswer(answer: string, seed: string) {
-    if (!answer.trim()) {
-      return seed;
-    }
-
-    return `${seed} khác ${answer.slice(0, Math.min(12, answer.length))}`;
-  }
-
-  private ensureUniqueAnswers(values: string[], fallbacks: string[]) {
-    const unique: string[] = [];
+  private uniqueOptions(values: string[]): string[] {
     const seen = new Set<string>();
+    const unique: string[] = [];
 
     for (const value of values) {
-      const normalized = this.normalizeForComparison(value);
+      const normalized = this.normalizeForCompare(value);
       if (!normalized || seen.has(normalized)) {
         continue;
       }
@@ -656,24 +383,74 @@ export class QuizService {
       unique.push(value);
     }
 
-    let fallbackIndex = 0;
-    while (unique.length < 4) {
-      const fallback = fallbacks[fallbackIndex % fallbacks.length];
-      const normalized = this.normalizeForComparison(fallback);
-      fallbackIndex += 1;
+    return unique;
+  }
 
+  private dedupeSources(sources: QuestionSource[]): QuestionSource[] {
+    const seen = new Set<string>();
+    const unique: QuestionSource[] = [];
+
+    for (const source of sources) {
+      const normalized = this.normalizeForCompare(source.text);
       if (!normalized || seen.has(normalized)) {
         continue;
       }
 
       seen.add(normalized);
-      unique.push(fallback);
+      unique.push(source);
     }
 
-    return unique.slice(1, 4);
+    return unique;
   }
 
-  private normalizeStringArray(value: unknown) {
+  private findMatchingChunkId(
+    text: string,
+    chunks: Awaited<ReturnType<PrismaService['chunk']['findMany']>>,
+  ): string | null {
+    const normalizedText = this.normalizeForCompare(text);
+
+    if (!normalizedText) {
+      return null;
+    }
+
+    const exact = chunks.find((chunk) =>
+      this.normalizeForCompare(chunk.content).includes(normalizedText),
+    );
+
+    if (exact) {
+      return exact.id;
+    }
+
+    const textTerms = new Set(
+      normalizedText
+        .split(/\s+/)
+        .filter((term) => term.length >= 4)
+        .slice(0, 12),
+    );
+
+    let bestChunkId: string | null = null;
+    let bestOverlap = 0;
+
+    for (const chunk of chunks) {
+      const chunkText = this.normalizeForCompare(chunk.content);
+      let overlap = 0;
+
+      for (const term of textTerms) {
+        if (chunkText.includes(term)) {
+          overlap += 1;
+        }
+      }
+
+      if (overlap > bestOverlap) {
+        bestChunkId = chunk.id;
+        bestOverlap = overlap;
+      }
+    }
+
+    return bestOverlap > 0 ? bestChunkId : null;
+  }
+
+  private normalizeStringArray(value: unknown): string[] {
     if (!Array.isArray(value)) {
       return [];
     }
@@ -683,39 +460,31 @@ export class QuizService {
       .filter(Boolean);
   }
 
-  private splitIntoSentences(text: string) {
-    return (
-      text
-        .match(/[^.!?]+[.!?]?/g)
-        ?.map((sentence) => sentence.trim())
-        .filter(Boolean) ?? []
-    );
+  private splitSentences(text: string): string[] {
+    const matches: string[] = text.match(/[^.!?]+(?:[.!?]+|$)/g) ?? [];
+
+    return matches
+      .map((sentence) => sentence.trim())
+      .filter((sentence) => sentence.length > 0);
   }
 
-  private splitWords(text: string) {
-    return text.split(/\s+/).filter(Boolean);
+  private truncateWords(text: string, maxWords: number): string {
+    const words = text.trim().split(/\s+/).filter(Boolean);
+
+    if (words.length <= maxWords) {
+      return words.join(' ');
+    }
+
+    return words.slice(0, maxWords).join(' ') + '...';
   }
 
-  private normalizeForComparison(value: string) {
+  private normalizeForCompare(value: string): string {
     return value
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
       .toLowerCase()
-      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
       .trim();
-  }
-
-  private handlePrismaError(error: unknown, id?: string): never {
-    if (error instanceof Prisma.PrismaClientKnownRequestError) {
-      if (error.code === 'P2003') {
-        throw new NotFoundException(`Video with id "${id}" not found`);
-      }
-
-      if (error.code === 'P2025') {
-        throw new NotFoundException(`Quiz with id "${id}" not found`);
-      }
-    }
-
-    throw error;
   }
 }

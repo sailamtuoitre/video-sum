@@ -86,7 +86,12 @@ function ensureTerminalPunctuation(value: string) {
 }
 
 export function cleanTranscriptText(transcripts: TranscriptResponse[]) {
-  return transcripts.map((transcript) => transcript.text).join(' ');
+  return normalizeVietnameseTranscript(
+    transcripts
+      .map((transcript) => stripCaptionMarkup(transcript.text))
+      .filter(Boolean)
+      .join(' '),
+  );
 }
 
 // export function parseYoutubeVtt(vtt: string) {

@@ -1,95 +1,37 @@
-import {
-  ConflictException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ChunkService } from '../chunks/chunk.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateSummaryDto } from './dto/create-summary.dto';
-import { UpdateSummaryDto } from './dto/update-summary.dto';
 
-type SummaryChunk = {
+type SourceChunk = {
+  id?: string;
+  videoId: string;
+  transcriptId: string;
   content: string;
   chunkIndex: number;
-  tokenCount?: number | null;
+  tokenCount: number | null;
+  startChar: number | null;
+  endChar: number | null;
 };
 
-type ChunkSummary = {
-  chunkIndex: number;
-  text: string;
-  keyPoints: string[];
-  mainTopics: string[];
-  tokenCount: number;
-};
-
-type SummarySection = {
-  sectionIndex: number;
-  chunkIndexes: number[];
-  text: string;
-  keyPoints: string[];
-  mainTopics: string[];
-  tokenCount: number;
-};
-
-type SummaryData = {
-  videoId: string;
+type SummaryDraft = {
   keyPoints: string[];
   simplifiedText: string;
   mainTopics: string[];
-  modelUsed: string;
-  promptTokens: number;
-  completionTokens: number;
+  sourceChunkCount: number;
+  sourceWordCount: number;
 };
 
 @Injectable()
 export class SummaryService {
+  private readonly sentenceLimit = 180;
+  private readonly chunkWordLimit = 180;
+  private readonly sectionSize = 4;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly chunkService: ChunkService,
   ) {}
-
-  async create(createSummaryDto: CreateSummaryDto) {
-    try {
-      return await this.prisma.summary.create({
-        data: createSummaryDto,
-      });
-    } catch (error) {
-      this.handlePrismaError(error, createSummaryDto.videoId);
-    }
-  }
-
-  async createFromVideo(videoId: string) {
-    const transcript = await this.prisma.transcript.findFirst({
-      where: {
-        videoId,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
-
-    if (!transcript) {
-      throw new NotFoundException(
-        `No transcript found for video with id "${videoId}"`,
-      );
-    }
-
-    const chunks = await this.loadChunksForTranscript(
-      transcript.videoId,
-      transcript.id,
-      transcript.rawText,
-    );
-    const summaryData = this.buildSummaryData(videoId, chunks);
-
-    return this.prisma.summary.upsert({
-      where: {
-        videoId,
-      },
-      create: summaryData,
-      update: summaryData,
-    });
-  }
 
   findAll(videoId?: string) {
     return this.prisma.summary.findMany({
@@ -114,17 +56,72 @@ export class SummaryService {
     return summary;
   }
 
-  async update(id: string, updateSummaryDto: UpdateSummaryDto) {
-    try {
-      return await this.prisma.summary.update({
-        where: {
-          id,
-        },
-        data: updateSummaryDto,
-      });
-    } catch (error) {
-      this.handlePrismaError(error, id);
+  async createFromVideo(videoId: string) {
+    const video = await this.prisma.video.findUnique({
+      where: {
+        id: videoId,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (!video) {
+      throw new NotFoundException(`Video with id "${videoId}" not found`);
     }
+
+    const transcript = await this.prisma.transcript.findFirst({
+      where: {
+        videoId,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    if (!transcript) {
+      throw new NotFoundException(
+        `Transcript for video with id "${videoId}" not found`,
+      );
+    }
+
+    const sourceChunks = await this.loadSourceChunks({
+      videoId,
+      transcriptId: transcript.id,
+      rawText: transcript.rawText,
+    });
+    const draft = this.buildSummaryDraft(sourceChunks);
+
+    return this.prisma.summary.upsert({
+      where: {
+        videoId,
+      },
+      create: {
+        videoId,
+        keyPoints: draft.keyPoints,
+        simplifiedText: draft.simplifiedText,
+        mainTopics: draft.mainTopics,
+        modelUsed: 'hierarchical-extractive-v2',
+        promptTokens: draft.sourceWordCount,
+        completionTokens: this.countWords(
+          [draft.simplifiedText, ...draft.keyPoints, ...draft.mainTopics].join(
+            ' ',
+          ),
+        ),
+      },
+      update: {
+        keyPoints: draft.keyPoints,
+        simplifiedText: draft.simplifiedText,
+        mainTopics: draft.mainTopics,
+        modelUsed: 'hierarchical-extractive-v2',
+        promptTokens: draft.sourceWordCount,
+        completionTokens: this.countWords(
+          [draft.simplifiedText, ...draft.keyPoints, ...draft.mainTopics].join(
+            ' ',
+          ),
+        ),
+      },
+    });
   }
 
   async remove(id: string) {
@@ -135,315 +132,319 @@ export class SummaryService {
         },
       });
     } catch (error) {
-      this.handlePrismaError(error, id);
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2025'
+      ) {
+        throw new NotFoundException(`Summary with id "${id}" not found`);
+      }
+
+      throw error;
     }
   }
 
-  private async loadChunksForTranscript(
-    videoId: string,
-    transcriptId: string,
-    rawText: string,
-  ): Promise<SummaryChunk[]> {
+  private async loadSourceChunks(input: {
+    videoId: string;
+    transcriptId: string;
+    rawText: string;
+  }): Promise<SourceChunk[]> {
     const chunks = await this.chunkService.ensureTranscriptChunks(
-      videoId,
-      transcriptId,
-      rawText,
+      input.videoId,
+      input.transcriptId,
+      input.rawText,
     );
 
     return chunks.map((chunk) => ({
+      id: chunk.id,
+      videoId: chunk.videoId,
+      transcriptId: chunk.transcriptId,
       content: chunk.content,
       chunkIndex: chunk.chunkIndex,
       tokenCount: chunk.tokenCount,
+      startChar: chunk.startChar,
+      endChar: chunk.endChar,
     }));
   }
 
-  private buildSummaryData(
-    videoId: string,
-    chunks: SummaryChunk[],
-  ): SummaryData {
-    const orderedChunks = chunks
-      .slice()
-      .sort((left, right) => left.chunkIndex - right.chunkIndex);
-    const chunkSummaries = orderedChunks.map((chunk) =>
-      this.buildChunkSummary(chunk),
+  private buildSummaryDraft(chunks: SourceChunk[]): SummaryDraft {
+    const cleanChunks = chunks
+      .map((chunk) => ({
+        ...chunk,
+        content: this.normalizeWhitespace(chunk.content),
+      }))
+      .filter((chunk) => chunk.content.length > 0);
+
+    if (cleanChunks.length === 0) {
+      throw new NotFoundException('No transcript content found for summary');
+    }
+
+    const digests = cleanChunks.map((chunk) => ({
+      chunk,
+      digest: this.buildChunkDigest(chunk.content),
+    }));
+    const sectionSummaries = this.buildSectionSummaries(
+      digests.map((item) => item.digest),
     );
-    const sectionSummaries = this.buildSectionSummaries(chunkSummaries);
-    const finalKeyPoints = this.extractKeyPointsFromTexts(
-      sectionSummaries.map((section) => section.text),
-      5,
+    const keyPoints = this.extractKeyPoints([
+      ...sectionSummaries,
+      ...digests.map((item) => item.digest),
+    ]);
+    const simplifiedText = this.buildSimplifiedText(
+      sectionSummaries,
+      keyPoints,
     );
-    const simplifiedText = this.composeSimplifiedText(finalKeyPoints);
+    const mainTopics = this.extractMainTopics(
+      cleanChunks.map((chunk) => chunk.content).join(' '),
+    );
 
     return {
-      videoId,
-      keyPoints: finalKeyPoints,
+      keyPoints,
       simplifiedText,
-      mainTopics: this.mergeTopics([
-        ...chunkSummaries.map((summary) => summary.mainTopics),
-        ...sectionSummaries.map((summary) => summary.mainTopics),
-      ]),
-      modelUsed: 'hierarchical-extractive-mvp',
-      promptTokens: this.countInputTokens(orderedChunks),
-      completionTokens: this.countWords(simplifiedText),
+      mainTopics,
+      sourceChunkCount: cleanChunks.length,
+      sourceWordCount: this.countWords(
+        cleanChunks.map((chunk) => chunk.content).join(' '),
+      ),
     };
   }
 
-  private buildChunkSummary(chunk: SummaryChunk): ChunkSummary {
-    const text = this.buildChunkDigest(chunk.content);
-    return {
-      chunkIndex: chunk.chunkIndex,
-      text,
-      keyPoints: this.extractKeyPointsFromTexts([text], 2),
-      mainTopics: this.extractMainTopics(chunk.content),
-      tokenCount: chunk.tokenCount ?? this.countWords(chunk.content),
-    };
-  }
+  private buildFallbackChunks(
+    rawText: string,
+    metadata: {
+      videoId: string;
+      transcriptId: string;
+    },
+  ): SourceChunk[] {
+    const sentences = this.splitSentences(rawText);
+    const chunks: SourceChunk[] = [];
+    let current: string[] = [];
+    let currentWords = 0;
+    let cursor = 0;
 
-  private buildSectionSummaries(
-    chunkSummaries: ChunkSummary[],
-  ): SummarySection[] {
-    const sections: SummarySection[] = [];
-    const maxSectionChunks = 4;
-    const maxSectionTokens = 650;
+    for (const sentence of sentences) {
+      const wordCount = this.countWords(sentence);
+      const shouldFlush =
+        current.length > 0 && currentWords + wordCount > this.chunkWordLimit;
 
-    let current: ChunkSummary[] = [];
-    let currentTokens = 0;
-
-    for (const chunkSummary of chunkSummaries) {
-      const nextTokens = currentTokens + chunkSummary.tokenCount;
-      const nextChunkCount = current.length + 1;
-
-      if (
-        current.length > 0 &&
-        (nextChunkCount > maxSectionChunks || nextTokens > maxSectionTokens)
-      ) {
-        sections.push(this.composeSectionSummary(sections.length, current));
+      if (shouldFlush) {
+        const content = current.join(' ');
+        chunks.push({
+          ...metadata,
+          content,
+          chunkIndex: chunks.length,
+          tokenCount: currentWords,
+          startChar: cursor,
+          endChar: cursor + content.length,
+        });
+        cursor += content.length + 1;
         current = [];
-        currentTokens = 0;
+        currentWords = 0;
       }
 
-      current.push(chunkSummary);
-      currentTokens += chunkSummary.tokenCount;
+      current.push(sentence);
+      currentWords += wordCount;
     }
 
     if (current.length > 0) {
-      sections.push(this.composeSectionSummary(sections.length, current));
+      const content = current.join(' ');
+      chunks.push({
+        ...metadata,
+        content,
+        chunkIndex: chunks.length,
+        tokenCount: currentWords,
+        startChar: cursor,
+        endChar: cursor + content.length,
+      });
     }
 
-    return sections;
-  }
-
-  private composeSectionSummary(
-    sectionIndex: number,
-    chunkSummaries: ChunkSummary[],
-  ): SummarySection {
-    const chunkIndexes = chunkSummaries.map((summary) => summary.chunkIndex);
-    const sectionText = this.extractKeyPointsFromTexts(
-      chunkSummaries.map((summary) => summary.text),
-      3,
-    );
-    const keyPoints =
-      sectionText.length > 0
-        ? sectionText
-        : chunkSummaries.map((summary) => summary.text);
-    const text = this.composeSimplifiedText(keyPoints);
-
-    return {
-      sectionIndex,
-      chunkIndexes,
-      text,
-      keyPoints,
-      mainTopics: this.mergeTopics(
-        chunkSummaries.map((summary) => summary.mainTopics),
-      ),
-      tokenCount: chunkSummaries.reduce(
-        (total, summary) => total + summary.tokenCount,
-        0,
-      ),
-    };
-  }
-
-  private buildChunkDigest(content: string) {
-    const sentences = this.splitIntoSentences(content);
-    if (sentences.length > 0) {
-      return sentences.slice(0, 2).join(' ').trim();
+    if (chunks.length > 0) {
+      return chunks;
     }
 
-    return this.truncateWords(content, 36);
+    const words = this.normalizeWhitespace(rawText)
+      .split(/\s+/)
+      .filter(Boolean);
+    for (let index = 0; index < words.length; index += this.chunkWordLimit) {
+      const content = words.slice(index, index + this.chunkWordLimit).join(' ');
+      chunks.push({
+        ...metadata,
+        content,
+        chunkIndex: chunks.length,
+        tokenCount: this.countWords(content),
+        startChar: null,
+        endChar: null,
+      });
+    }
+
+    return chunks;
   }
 
-  private extractKeyPointsFromTexts(texts: string[], limit: number) {
-    const keyPoints: string[] = [];
-    const seen = new Set<string>();
+  private buildChunkDigest(text: string): string {
+    const sentences = this.splitSentences(text);
+    const selected = sentences
+      .filter((sentence) => this.countWords(sentence) >= 5)
+      .slice(0, 2);
+    const digest = selected.length > 0 ? selected.join(' ') : text;
 
-    for (const text of texts) {
-      const digest = this.buildChunkDigest(text);
-      if (!digest) {
-        continue;
-      }
+    return this.truncateWords(digest, 48);
+  }
 
-      const normalizedDigest = this.normalizeForComparison(digest);
-      if (seen.has(normalizedDigest)) {
-        continue;
-      }
+  private buildSectionSummaries(digests: string[]): string[] {
+    const summaries: string[] = [];
 
-      seen.add(normalizedDigest);
-      keyPoints.push(digest);
+    for (let index = 0; index < digests.length; index += this.sectionSize) {
+      const section = digests.slice(index, index + this.sectionSize);
+      summaries.push(this.truncateWords(section.join(' '), this.sentenceLimit));
+    }
 
-      if (keyPoints.length >= limit) {
-        break;
+    return summaries;
+  }
+
+  private extractKeyPoints(candidates: string[]): string[] {
+    const unique = new Map<string, string>();
+
+    for (const candidate of candidates) {
+      const sentences = this.splitSentences(candidate);
+
+      for (const sentence of sentences) {
+        const clean = this.truncateWords(sentence, 36);
+        const key = this.normalizeForCompare(clean);
+
+        if (key.length >= 20 && !unique.has(key)) {
+          unique.set(key, clean);
+        }
+
+        if (unique.size >= 6) {
+          return [...unique.values()];
+        }
       }
     }
 
-    return keyPoints;
+    return [...unique.values()];
   }
 
-  private composeSimplifiedText(keyPoints: string[]) {
-    return keyPoints
-      .map((point) => point.trim())
-      .filter(Boolean)
-      .map((point) => this.ensureTerminalPunctuation(point))
-      .join(' ');
+  private buildSimplifiedText(
+    sectionSummaries: string[],
+    keyPoints: string[],
+  ): string {
+    const source = sectionSummaries.length > 0 ? sectionSummaries : keyPoints;
+    const text = source.slice(0, 3).join(' ');
+
+    return this.truncateWords(text, 220);
   }
 
-  private extractMainTopics(text: string) {
-    const stopWords = new Set([
-      'va',
-      'la',
-      'cua',
-      'co',
-      'cho',
-      'the',
-      'and',
-      'you',
-      'that',
-      'this',
-      'with',
-      'mot',
-      'cac',
-      'nhung',
-      'trong',
-      'voi',
-      'nay',
-      'duoc',
-      'de',
-      'o',
-      'tu',
-      'neu',
-    ]);
+  private extractMainTopics(text: string): string[] {
+    const mathPhrases = this.extractMathPhrases(text);
+    const words = this.normalizeForCompare(text)
+      .split(/\s+/)
+      .filter((word) => word.length >= 3 && !this.stopWords.has(word));
 
-    const frequencies = new Map<string, { word: string; count: number }>();
-    const words = text.match(/[\p{L}\p{N}]+/gu) ?? [];
+    const frequencies = new Map<string, number>();
 
     for (const word of words) {
-      const normalized = this.normalizeTopicWord(word);
-      if (normalized.length <= 3 || stopWords.has(normalized)) {
-        continue;
-      }
-
-      const current = frequencies.get(normalized);
-      if (current) {
-        current.count += 1;
-      } else {
-        frequencies.set(normalized, {
-          word,
-          count: 1,
-        });
-      }
+      frequencies.set(word, (frequencies.get(word) ?? 0) + 1);
     }
 
-    return [...frequencies.values()]
-      .sort((left, right) => right.count - left.count)
-      .slice(0, 5)
-      .map((entry) => entry.word);
+    const frequentWords = [...frequencies.entries()]
+      .sort(
+        (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
+      )
+      .map(([word]) => word)
+      .slice(0, 8);
+
+    return [...new Set([...mathPhrases, ...frequentWords])].slice(0, 10);
   }
 
-  private mergeTopics(topicGroups: string[][]) {
-    const frequencies = new Map<string, { word: string; count: number }>();
+  private extractMathPhrases(text: string): string[] {
+    const normalized = this.normalizeForCompare(text);
+    const topics = [
+      ['linear equation', /\b(linear equation|phuong trinh bac nhat)\b/],
+      ['quadratic equation', /\b(quadratic equation|phuong trinh bac hai)\b/],
+      ['system of equations', /\b(system of equations|he phuong trinh)\b/],
+      ['function', /\b(function|ham so)\b/],
+      ['derivative', /\b(derivative|dao ham)\b/],
+      ['integral', /\b(integral|tich phan)\b/],
+      ['geometry', /\b(geometry|hinh hoc)\b/],
+      ['probability', /\b(probability|xac suat)\b/],
+      ['statistics', /\b(statistics|thong ke)\b/],
+      ['vector', /\b(vector|vec to)\b/],
+    ] as const;
 
-    for (const topicGroup of topicGroups) {
-      for (const topic of topicGroup) {
-        const normalized = this.normalizeTopicWord(topic);
-        if (!normalized) {
-          continue;
-        }
+    return topics
+      .filter(([, pattern]) => pattern.test(normalized))
+      .map(([topic]) => topic);
+  }
 
-        const current = frequencies.get(normalized);
-        if (current) {
-          current.count += 1;
-        } else {
-          frequencies.set(normalized, {
-            word: topic,
-            count: 1,
-          });
-        }
-      }
+  private splitSentences(text: string): string[] {
+    const normalized = this.normalizeWhitespace(text);
+    const sentencePattern = /[^.!?]+(?:[.!?]+|$)/g;
+    const matches: string[] = normalized.match(sentencePattern) ?? [];
+
+    return matches
+      .map((sentence) => sentence.trim())
+      .filter((sentence) => sentence.length > 0);
+  }
+
+  private truncateWords(text: string, maxWords: number): string {
+    const words = this.normalizeWhitespace(text).split(/\s+/).filter(Boolean);
+
+    if (words.length <= maxWords) {
+      return words.join(' ');
     }
 
-    return [...frequencies.values()]
-      .sort((left, right) => right.count - left.count)
-      .slice(0, 5)
-      .map((entry) => entry.word);
+    return words.slice(0, maxWords).join(' ') + '...';
   }
 
-  private countInputTokens(chunks: SummaryChunk[]) {
-    return chunks.reduce((total, chunk) => {
-      return total + (chunk.tokenCount ?? this.countWords(chunk.content));
-    }, 0);
+  private normalizeWhitespace(text: string): string {
+    return text.replace(/\s+/g, ' ').trim();
   }
 
-  private splitIntoSentences(text: string) {
-    return (
-      text
-        .match(/[^.!?]+[.!?]?/g)
-        ?.map((sentence) => sentence.trim())
-        .filter(Boolean) ?? []
-    );
-  }
-
-  private truncateWords(text: string, maxWords: number) {
-    const words = text.split(/\s+/).filter(Boolean);
-    return words.slice(0, maxWords).join(' ');
-  }
-
-  private ensureTerminalPunctuation(text: string) {
-    if (/[.!?]$/.test(text)) {
-      return text;
-    }
-
-    return `${text}.`;
-  }
-
-  private normalizeTopicWord(word: string) {
-    return word
+  private normalizeForCompare(text: string): string {
+    return this.normalizeWhitespace(text)
+      .toLowerCase()
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase();
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
-  private normalizeForComparison(value: string) {
-    return this.normalizeTopicWord(value).replace(/[^\p{L}\p{N}]+/gu, ' ');
+  private countWords(text: string): number {
+    return this.normalizeWhitespace(text).split(/\s+/).filter(Boolean).length;
   }
 
-  private handlePrismaError(error: unknown, id?: string): never {
-    if (error instanceof Prisma.PrismaClientKnownRequestError) {
-      if (error.code === 'P2002') {
-        throw new ConflictException('Summary for this video already exists');
-      }
-
-      if (error.code === 'P2003') {
-        throw new NotFoundException(`Video with id "${id}" not found`);
-      }
-
-      if (error.code === 'P2025') {
-        throw new NotFoundException(`Summary with id "${id}" not found`);
-      }
-    }
-
-    throw error;
-  }
-
-  private countWords(text: string) {
-    return text.split(/\s+/).filter(Boolean).length;
-  }
+  private readonly stopWords = new Set([
+    'about',
+    'after',
+    'also',
+    'and',
+    'are',
+    'because',
+    'but',
+    'can',
+    'cho',
+    'cac',
+    'cach',
+    'cua',
+    'duoc',
+    'for',
+    'from',
+    'hay',
+    'khi',
+    'la',
+    'lam',
+    'mot',
+    'nay',
+    'neu',
+    'nhu',
+    'not',
+    'qua',
+    'that',
+    'the',
+    'thi',
+    'this',
+    'trong',
+    'voi',
+    'you',
+  ]);
 }

@@ -1,22 +1,18 @@
 import {
+  BadRequestException,
   ConflictException,
   InternalServerErrorException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import { Prisma } from '@prisma/client';
+import { YoutubeTranscript } from 'youtube-transcript';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateVideoDto } from './dto/create-video.dto';
+import { RagService } from '../rag/rag.service';
 import { cleanTranscriptText } from './transcript-cleaner';
+import { CreateVideoDto } from './dto/create-video.dto';
 import { UpdateVideoDto } from './dto/update-video.dto';
-import { SummaryService } from '../summaries/summary.service';
-import { WhisperService } from '../whisper/whisper.service';
-import { TranscriptResponse } from 'youtube-transcript';
-
-const execAsync = promisify(exec);
 
 @Injectable()
 export class VideoService {
@@ -24,8 +20,7 @@ export class VideoService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly whisperService: WhisperService,
-    private readonly summaryService: SummaryService,
+    private readonly ragService: RagService,
   ) {}
 
   async create(createVideoDto: CreateVideoDto) {
@@ -33,23 +28,63 @@ export class VideoService {
       | Awaited<ReturnType<PrismaService['video']['create']>>
       | undefined;
 
-    const youtubeId = createVideoDto.youtubeId!;
+    if (!createVideoDto.youtubeId) {
+      throw new BadRequestException('youtubeId is required');
+    }
 
     try {
+      const title =
+        createVideoDto.title ??
+        (await this.fetchYoutubeTitle(createVideoDto.url)) ??
+        null;
+
       video = await this.prisma.video.create({
         data: {
-          youtubeId,
+          youtubeId: createVideoDto.youtubeId,
           url: createVideoDto.url,
-          title: createVideoDto.title,
+          title,
           projectId: createVideoDto.projectId ?? null,
           durationSec: createVideoDto.durationSec,
           language: createVideoDto.language,
-          status: 'processing',
+          status: 'completed',
           errorMessage: null,
         },
       });
 
-      return await this.processVideo(video.id, youtubeId);
+      const transcriptSegments = await YoutubeTranscript.fetchTranscript(
+        createVideoDto.youtubeId,
+        {
+          lang: createVideoDto.language ?? 'vi',
+        },
+      );
+      const transcriptText = cleanTranscriptText(transcriptSegments);
+
+      if (!transcriptText) {
+        throw new Error('Transcript text is empty');
+      }
+
+      const transcript = await this.prisma.transcript.create({
+        data: {
+          videoId: video.id,
+          rawText: transcriptText,
+          source: 'youtube',
+          wordCount: transcriptText.split(/\s+/).filter(Boolean).length,
+        },
+      });
+      const rag = await this.ragService.ingestTranscriptText(transcriptText, {
+        source: 'youtube_transcript',
+        videoId: video.id,
+        transcriptId: transcript.id,
+        youtubeId: video.youtubeId,
+        url: video.url,
+      });
+
+      return {
+        video,
+        transcript,
+        rag,
+        summary: null,
+      };
     } catch (error) {
       if (video) {
         await this.prisma.video.update({
@@ -144,53 +179,40 @@ export class VideoService {
     throw error;
   }
 
-  private async processVideo(videoId: string, youtubeId: string) {
-    let rawText: TranscriptResponse[];
-    let source: 'youtube_caption' | 'whisper';
-
-
-    rawText = await this.whisperService.fetchYoutubeTranscript(youtubeId);
-    source = 'whisper';
-
-    const cleanedText = cleanTranscriptText(rawText);
-
-    const transcript = await this.prisma.transcript.create({
-      data: {
-        videoId,
-        rawText: cleanedText,
-        source,
-        wordCount: cleanedText.length,
-      },
-    });
-
-    let summary:
-      | Awaited<ReturnType<SummaryService['createFromVideo']>>
-      | null = null;
-
+  private async fetchYoutubeTitle(url: string): Promise<string | undefined> {
     try {
-      summary = await this.summaryService.createFromVideo(videoId);
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'summary generation failed';
-      this.logger.warn(
-        `Summary generation failed for video "${videoId}": ${message}`,
+      const response = await fetch(
+        `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`,
       );
+
+      if (!response.ok) {
+        this.logger.warn(
+          `Could not fetch YouTube title: ${response.status} ${response.statusText}`,
+        );
+        return undefined;
+      }
+
+      const data: unknown = await response.json();
+
+      if (!this.isYoutubeOembedResponse(data)) {
+        return undefined;
+      }
+
+      const title = data.title.trim();
+      return title.length > 0 ? title.slice(0, 500) : undefined;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.warn(`Could not fetch YouTube title: ${message}`);
+      return undefined;
     }
+  }
 
-    const completedVideo = await this.prisma.video.update({
-      where: {
-        id: videoId,
-      },
-      data: {
-        status: 'completed',
-        errorMessage: null,
-      },
-    });
-
-    return {
-      video: completedVideo,
-      transcript,
-      summary,
-    };
+  private isYoutubeOembedResponse(value: unknown): value is { title: string } {
+    return (
+      typeof value === 'object' &&
+      value !== null &&
+      'title' in value &&
+      typeof value.title === 'string'
+    );
   }
 }

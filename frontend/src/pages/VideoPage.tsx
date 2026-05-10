@@ -31,9 +31,17 @@ export default function VideoPage() {
     },
   });
 
-  const { data: summary } = useQuery({
+  const { data: summary, isLoading: summaryLoading } = useQuery({
     queryKey: ['summary', videoId],
-    queryFn: () => api.getSummary(videoId!),
+    queryFn: async () => {
+      const existingSummary = await api.getSummary(videoId!);
+
+      if (existingSummary) {
+        return existingSummary;
+      }
+
+      return api.generateSummary(videoId!);
+    },
     enabled: !!videoId && video?.status === 'completed',
   });
 
@@ -89,6 +97,16 @@ export default function VideoPage() {
 
       {video.status === 'completed' && (
         <>
+          {summaryLoading && (
+            <section className="space-y-4">
+              <h2 className="font-display text-xl font-medium text-gold">TÃ³m táº¯t</h2>
+              <div className="space-y-3">
+                <div className="h-5 w-1/3 shimmer rounded-lg" />
+                <div className="h-24 shimmer rounded-xl" />
+              </div>
+            </section>
+          )}
+
           {summary && (
             <section className="space-y-5">
               <h2 className="font-display text-xl font-medium text-gold">Tóm tắt</h2>
@@ -146,7 +164,7 @@ export default function VideoPage() {
 
           <section className="space-y-4">
             <h2 className="font-display text-xl font-medium text-gold">Công cụ học tập</h2>
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 gap-4">
               <Link
                 to={`/video/${videoId}/chat`}
                 className="group p-6 rounded-xl border border-parchment-light bg-parchment hover:border-sage/40 hover:bg-parchment-hover transition-all duration-200"
@@ -178,22 +196,6 @@ export default function VideoPage() {
                 </p>
               </Link>
 
-              <Link
-                to={`/video/${videoId}/flashcards`}
-                className="group p-6 rounded-xl border border-parchment-light bg-parchment hover:border-ember/40 hover:bg-parchment-hover transition-all duration-200"
-              >
-                <div className="w-10 h-10 rounded-lg bg-ember/10 flex items-center justify-center mb-4 group-hover:bg-ember/15 transition-colors">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-ember">
-                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
-                    <line x1="8" y1="21" x2="16" y2="21" />
-                    <line x1="12" y1="17" x2="12" y2="21" />
-                  </svg>
-                </div>
-                <h3 className="font-display text-base font-medium text-ink mb-1">Flashcards</h3>
-                <p className="text-xs text-ink-faint leading-relaxed">
-                  Thẻ ghi nhớ để ôn tập. Lật thẻ để kiểm tra và đánh dấu mức độ thuộc bài.
-                </p>
-              </Link>
             </div>
           </section>
         </>
