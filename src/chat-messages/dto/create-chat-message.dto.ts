@@ -21,7 +21,7 @@ export class CreateChatMessageDto {
 
   @IsOptional()
   @IsArray()
-  retrievedChunks?: unknown[];
+  retrievedChunks: 'NullableJsonNullValueInput | InputJsonValue | undefined';
 
   @IsOptional()
   @IsInt()

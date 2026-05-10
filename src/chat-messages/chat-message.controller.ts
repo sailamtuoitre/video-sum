@@ -25,24 +25,24 @@ export class ChatMessageController {
     return this.chatMessageService.create(createChatMessageDto);
   }
 
-  @Post('ask')
-  ask(@Body() askChatMessageDto: AskChatMessageDto) {
-    return this.chatMessageService.ask(askChatMessageDto);
-  }
+  // @Post('ask')
+  // ask(@Body() askChatMessageDto: AskChatMessageDto) {
+  //   return this.chatMessageService.ask(askChatMessageDto);
+  // }
 
-  @Get('memory-embeddings')
-  listMemoryEmbeddings(@Query() query: ListChatMemoryEmbeddingsQueryDto) {
-    return this.chatMessageService.listMemoryEmbeddings(query);
-  }
+  // @Get('memory-embeddings')
+  // listMemoryEmbeddings(@Query() query: ListChatMemoryEmbeddingsQueryDto) {
+  //   return this.chatMessageService.listMemoryEmbeddings(query);
+  // }
 
-  @Post('memory-embeddings/rebuild')
-  rebuildMemoryEmbeddings(
-    @Body() rebuildChatMemoryEmbeddingsDto: RebuildChatMemoryEmbeddingsDto,
-  ) {
-    return this.chatMessageService.rebuildMemoryEmbeddings(
-      rebuildChatMemoryEmbeddingsDto,
-    );
-  }
+  // @Post('memory-embeddings/rebuild')
+  // rebuildMemoryEmbeddings(
+  //   @Body() rebuildChatMemoryEmbeddingsDto: RebuildChatMemoryEmbeddingsDto,
+  // ) {
+  //   return this.chatMessageService.rebuildMemoryEmbeddings(
+  //     rebuildChatMemoryEmbeddingsDto,
+  //   );
+  // }
 
   @Get()
   findAll(@Query('sessionId') sessionId?: string) {

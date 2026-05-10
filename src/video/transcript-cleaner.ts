@@ -1,4 +1,5 @@
 import Str from 'normalize-vietnamese';
+import { TranscriptResponse } from 'youtube-transcript';
 
 function decodeHtmlEntities(value: string) {
   return value
@@ -84,54 +85,54 @@ function ensureTerminalPunctuation(value: string) {
   return `${trimmed}.`;
 }
 
-export function cleanTranscriptText(rawText: string) {
-  return normalizeVietnameseTranscript(stripCaptionMarkup(rawText));
+export function cleanTranscriptText(transcripts: TranscriptResponse[]) {
+  return transcripts.map((transcript) => transcript.text).join(' ');
 }
 
-export function parseYoutubeVtt(vtt: string) {
-  const blocks = vtt
-    .split(/\r?\n\r?\n+/)
-    .map((block) => block.trim())
-    .filter(Boolean);
+// export function parseYoutubeVtt(vtt: string) {
+//   const blocks = vtt
+//     .split(/\r?\n\r?\n+/)
+//     .map((block) => block.trim())
+//     .filter(Boolean);
 
-  const segments: string[] = [];
-  let previousCaption = '';
+//   const segments: string[] = [];
+//   let previousCaption = '';
 
-  for (const block of blocks) {
-    const lines = block
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
+//   for (const block of blocks) {
+//     const lines = block
+//       .split(/\r?\n/)
+//       .map((line) => line.trim())
+//       .filter(Boolean);
 
-    if (
-      lines.length === 0 ||
-      lines[0].startsWith('WEBVTT') ||
-      lines[0].startsWith('NOTE') ||
-      lines[0].startsWith('STYLE')
-    ) {
-      continue;
-    }
+//     if (
+//       lines.length === 0 ||
+//       lines[0].startsWith('WEBVTT') ||
+//       lines[0].startsWith('NOTE') ||
+//       lines[0].startsWith('STYLE')
+//     ) {
+//       continue;
+//     }
 
-    const contentLines = lines.filter(
-      (line) =>
-        !/^\d+$/.test(line) &&
-        !line.includes('-->') &&
-        !line.startsWith('Kind:') &&
-        !line.startsWith('Language:'),
-    );
+//     const contentLines = lines.filter(
+//       (line) =>
+//         !/^\d+$/.test(line) &&
+//         !line.includes('-->') &&
+//         !line.startsWith('Kind:') &&
+//         !line.startsWith('Language:'),
+//     );
 
-    const caption = cleanTranscriptText(contentLines.join(' '));
-    if (!caption) {
-      continue;
-    }
+//     const caption = cleanTranscriptText(contentLines.join(' '));
+//     if (!caption) {
+//       continue;
+//     }
 
-    const newSegment = getNewCaptionSegment(previousCaption, caption);
-    if (newSegment) {
-      segments.push(ensureTerminalPunctuation(newSegment));
-    }
+//     const newSegment = getNewCaptionSegment(previousCaption, caption);
+//     if (newSegment) {
+//       segments.push(ensureTerminalPunctuation(newSegment));
+//     }
 
-    previousCaption = caption;
-  }
+//     previousCaption = caption;
+//   }
 
-  return cleanTranscriptText(segments.join(' '));
-}
+//   return cleanTranscriptText(segments.join(' '));
+// }
