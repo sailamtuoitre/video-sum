@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { ChatOpenAI } from '@langchain/openai';
 import { Prisma } from '@prisma/client';
 import { ChunkService } from '../chunks/chunk.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -18,6 +19,7 @@ type SummaryDraft = {
   keyPoints: string[];
   simplifiedText: string;
   mainTopics: string[];
+  modelUsed: string;
   sourceChunkCount: number;
   sourceWordCount: number;
 };
@@ -27,6 +29,7 @@ export class SummaryService {
   private readonly sentenceLimit = 180;
   private readonly chunkWordLimit = 180;
   private readonly sectionSize = 4;
+  private readonly aiSummaryMaxChars = 12000;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -90,7 +93,8 @@ export class SummaryService {
       transcriptId: transcript.id,
       rawText: transcript.rawText,
     });
-    const draft = this.buildSummaryDraft(sourceChunks);
+    const fallbackDraft = this.buildSummaryDraft(sourceChunks);
+    const draft = await this.buildAiSummaryDraft(sourceChunks, fallbackDraft);
 
     return this.prisma.summary.upsert({
       where: {
@@ -101,7 +105,7 @@ export class SummaryService {
         keyPoints: draft.keyPoints,
         simplifiedText: draft.simplifiedText,
         mainTopics: draft.mainTopics,
-        modelUsed: 'hierarchical-extractive-v2',
+        modelUsed: draft.modelUsed,
         promptTokens: draft.sourceWordCount,
         completionTokens: this.countWords(
           [draft.simplifiedText, ...draft.keyPoints, ...draft.mainTopics].join(
@@ -113,7 +117,7 @@ export class SummaryService {
         keyPoints: draft.keyPoints,
         simplifiedText: draft.simplifiedText,
         mainTopics: draft.mainTopics,
-        modelUsed: 'hierarchical-extractive-v2',
+        modelUsed: draft.modelUsed,
         promptTokens: draft.sourceWordCount,
         completionTokens: this.countWords(
           [draft.simplifiedText, ...draft.keyPoints, ...draft.mainTopics].join(
@@ -201,11 +205,209 @@ export class SummaryService {
       keyPoints,
       simplifiedText,
       mainTopics,
+      modelUsed: 'hierarchical-extractive-v2',
       sourceChunkCount: cleanChunks.length,
       sourceWordCount: this.countWords(
         cleanChunks.map((chunk) => chunk.content).join(' '),
       ),
     };
+  }
+
+  private async buildAiSummaryDraft(
+    chunks: SourceChunk[],
+    fallbackDraft: SummaryDraft,
+  ): Promise<SummaryDraft> {
+    const groqApiKey = process.env.GROQ_API_KEY;
+
+    if (!groqApiKey) {
+      return fallbackDraft;
+    }
+
+    try {
+      const model = process.env.GROQ_MODEL ?? 'llama-3.1-8b-instant';
+      const llm = new ChatOpenAI({
+        model,
+        apiKey: groqApiKey,
+        configuration: {
+          baseURL:
+            process.env.GROQ_BASE_URL ?? 'https://api.groq.com/openai/v1',
+        },
+        temperature: 0.1,
+        maxTokens: 1400,
+      });
+
+      const response = await llm.invoke(this.buildMathSummaryPrompt(chunks));
+      const parsed = this.parseAiSummaryContent(
+        this.extractMessageText(response.content),
+      );
+
+      return {
+        ...fallbackDraft,
+        keyPoints: parsed.keyPoints,
+        simplifiedText: parsed.simplifiedText,
+        mainTopics: parsed.mainTopics,
+        modelUsed: `groq:${model}:math-summary-v1`,
+      };
+    } catch (error) {
+      console.error(
+        'AI summary failed. Falling back to extractive summary:',
+        error,
+      );
+      return fallbackDraft;
+    }
+  }
+
+  private buildMathSummaryPrompt(chunks: SourceChunk[]): string {
+    const evidence = this.buildChunkEvidence(chunks);
+
+    return `Bạn là một hệ thống tóm tắt nội dung học toán có độ chính xác cao.
+
+Nhiệm vụ:
+- Tóm tắt nội dung transcript theo đúng dữ kiện trong SOURCE_CHUNKS.
+- Nếu transcript có bài giải toán, hãy giữ lại các bước biến đổi quan trọng và lý do của từng bước.
+- Nếu transcript chỉ là giảng bài/lý thuyết, hãy tóm tắt khái niệm, công thức, điều kiện áp dụng và ví dụ được nêu.
+
+Quy tắc bắt buộc:
+1. Không được suy đoán.
+2. Nếu thiếu dữ kiện, phải nói rõ dữ kiện nào còn thiếu.
+3. Chỉ sử dụng công thức/toán lý đã được chứng minh hoặc chuẩn hóa.
+4. Mỗi bước biến đổi phải ghi rõ lý do nếu transcript có bài giải.
+5. Không bỏ qua bước tính quan trọng được nêu trong transcript.
+6. Sau khi tóm tắt bài giải, phải nêu phần kiểm tra lại kết quả, thay ngược vào đề nếu transcript có dữ kiện, và xác minh điều kiện xác định.
+7. Nếu transcript nêu nhiều cách giải, hãy liệt kê ngắn gọn, chọn cách tối ưu và giải thích vì sao.
+8. Nếu không chắc chắn ở bước nào, phải ghi: "Không đủ độ tin cậy để khẳng định bước này."
+
+Định dạng nội dung trong simplifiedText:
+- Phân tích đề bài
+- Điều kiện/giả thiết
+- Công thức sử dụng
+- Giải từng bước
+- Kiểm tra kết quả
+- Kết luận cuối cùng
+
+Không được tạo ra định lý, công thức hoặc dữ kiện không tồn tại.
+Không được trả lời kiểu có vẻ, có thể đúng nếu chưa kiểm chứng.
+
+Chỉ trả về JSON hợp lệ, không bọc markdown, không thêm giải thích ngoài JSON:
+{
+  "keyPoints": ["3 đến 6 ý chính, mỗi ý dựa trực tiếp trên SOURCE_CHUNKS"],
+  "simplifiedText": "Bản tóm tắt tiếng Việt theo đúng các mục định dạng ở trên. Nếu mục nào thiếu dữ kiện trong transcript, ghi rõ thiếu dữ kiện.",
+  "mainTopics": ["3 đến 10 chủ đề/toán dạng bài xuất hiện trong SOURCE_CHUNKS"]
+}
+
+SOURCE_CHUNKS:
+${evidence}`;
+  }
+
+  private buildChunkEvidence(chunks: SourceChunk[]): string {
+    const cleanChunks = chunks
+      .map((chunk) => ({
+        ...chunk,
+        content: this.normalizeWhitespace(chunk.content),
+      }))
+      .filter((chunk) => chunk.content.length > 0);
+
+    let totalChars = 0;
+    const evidence: string[] = [];
+
+    for (const chunk of cleanChunks) {
+      const content = this.truncateWords(chunk.content, this.chunkWordLimit);
+      const entry = `[chunk ${chunk.chunkIndex}] ${content}`;
+
+      if (totalChars + entry.length > this.aiSummaryMaxChars) {
+        break;
+      }
+
+      evidence.push(entry);
+      totalChars += entry.length;
+    }
+
+    return evidence.join('\n\n');
+  }
+
+  private parseAiSummaryContent(
+    content: string,
+  ): Pick<SummaryDraft, 'keyPoints' | 'simplifiedText' | 'mainTopics'> {
+    const jsonText = this.extractJsonObject(content);
+    const parsed: unknown = JSON.parse(jsonText);
+
+    if (!this.isSummaryJson(parsed)) {
+      throw new Error(
+        'AI summary response does not match the expected schema.',
+      );
+    }
+
+    return {
+      keyPoints: this.cleanStringArray(parsed.keyPoints, 6),
+      simplifiedText: this.normalizeWhitespace(parsed.simplifiedText),
+      mainTopics: this.cleanStringArray(parsed.mainTopics, 10),
+    };
+  }
+
+  private extractJsonObject(text: string): string {
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+
+    if (start === -1 || end === -1 || end <= start) {
+      throw new Error('AI summary response did not contain a JSON object.');
+    }
+
+    return text.slice(start, end + 1);
+  }
+
+  private extractMessageText(content: unknown): string {
+    if (typeof content === 'string') {
+      return content;
+    }
+
+    if (Array.isArray(content)) {
+      return content
+        .map((item) => {
+          if (this.isTextContentPart(item)) {
+            return item.text;
+          }
+
+          return '';
+        })
+        .join('\n');
+    }
+
+    return String(content);
+  }
+
+  private isTextContentPart(value: unknown): value is { text: string } {
+    if (typeof value !== 'object' || value === null || !('text' in value)) {
+      return false;
+    }
+
+    const candidate = value as Record<string, unknown>;
+
+    return typeof candidate.text === 'string';
+  }
+
+  private isSummaryJson(value: unknown): value is {
+    keyPoints: unknown[];
+    simplifiedText: string;
+    mainTopics: unknown[];
+  } {
+    return (
+      typeof value === 'object' &&
+      value !== null &&
+      'keyPoints' in value &&
+      Array.isArray(value.keyPoints) &&
+      'simplifiedText' in value &&
+      typeof value.simplifiedText === 'string' &&
+      'mainTopics' in value &&
+      Array.isArray(value.mainTopics)
+    );
+  }
+
+  private cleanStringArray(values: unknown[], limit: number): string[] {
+    return values
+      .filter((value): value is string => typeof value === 'string')
+      .map((value) => this.normalizeWhitespace(value))
+      .filter((value) => value.length > 0)
+      .slice(0, limit);
   }
 
   private buildFallbackChunks(

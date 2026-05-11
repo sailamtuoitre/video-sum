@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { ChatOpenAI } from '@langchain/openai';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SummaryService } from '../summaries/summary.service';
@@ -12,6 +13,10 @@ type SummaryInput = {
   modelUsed: string | null;
 };
 
+type SourceChunk = Awaited<
+  ReturnType<PrismaService['chunk']['findMany']>
+>[number];
+
 type MiniTestQuestion = {
   questionText: string;
   options: Record<QuizOption, string>;
@@ -19,6 +24,18 @@ type MiniTestQuestion = {
   explanation: string;
   questionIndex: number;
   sourceChunkId: string | null;
+};
+
+type GeneratedQuiz = {
+  questions: MiniTestQuestion[];
+  modelUsed: string;
+};
+
+type AiQuizQuestion = {
+  questionText: string;
+  options: Record<QuizOption, string>;
+  correctOption: QuizOption;
+  explanation: string;
 };
 
 type QuestionSource = {
@@ -30,6 +47,7 @@ type QuestionSource = {
 @Injectable()
 export class QuizService {
   private readonly totalQuestions = 10;
+  private readonly aiQuizMaxChars = 12000;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -53,20 +71,20 @@ export class QuizService {
 
     const summary = await this.ensureSummary(videoId);
     const sourceChunks = await this.findSourceChunks(videoId);
-    const questions = this.buildMiniTestQuestions(summary, sourceChunks);
+    const generated = await this.buildMiniTestQuestions(summary, sourceChunks);
 
     return this.prisma.$transaction(async (tx) => {
       const quiz = await tx.quiz.create({
         data: {
           videoId,
           title: video.title ? `Mini test: ${video.title}` : 'Mini test',
-          totalQuestions: questions.length,
-          modelUsed: 'summary-rule-minitest-v1',
+          totalQuestions: generated.questions.length,
+          modelUsed: generated.modelUsed,
         },
       });
 
       await tx.quizQuestion.createMany({
-        data: questions.map((question) => ({
+        data: generated.questions.map((question) => ({
           quizId: quiz.id,
           questionText: question.questionText,
           options: question.options,
@@ -186,9 +204,134 @@ export class QuizService {
     });
   }
 
-  private buildMiniTestQuestions(
+  private async buildMiniTestQuestions(
     summary: SummaryInput,
-    sourceChunks: Awaited<ReturnType<PrismaService['chunk']['findMany']>>,
+    sourceChunks: SourceChunk[],
+  ): Promise<GeneratedQuiz> {
+    const aiQuestions = await this.buildAiMiniTestQuestions(
+      summary,
+      sourceChunks,
+    );
+
+    if (aiQuestions.length === this.totalQuestions) {
+      return {
+        questions: aiQuestions,
+        modelUsed: `groq:${process.env.GROQ_MODEL ?? 'llama-3.1-8b-instant'}:math-quiz-v1`,
+      };
+    }
+
+    return {
+      questions: this.buildRuleMiniTestQuestions(summary, sourceChunks),
+      modelUsed: 'summary-rule-minitest-v2',
+    };
+  }
+
+  private async buildAiMiniTestQuestions(
+    summary: SummaryInput,
+    sourceChunks: SourceChunk[],
+  ): Promise<MiniTestQuestion[]> {
+    const groqApiKey = process.env.GROQ_API_KEY;
+
+    if (!groqApiKey) {
+      return [];
+    }
+
+    try {
+      const model = process.env.GROQ_MODEL ?? 'llama-3.1-8b-instant';
+      const llm = new ChatOpenAI({
+        model,
+        apiKey: groqApiKey,
+        configuration: {
+          baseURL:
+            process.env.GROQ_BASE_URL ?? 'https://api.groq.com/openai/v1',
+        },
+        temperature: 0.2,
+        maxTokens: 2200,
+      });
+
+      const response = await llm.invoke(
+        this.buildMathQuizPrompt(summary, sourceChunks),
+      );
+      const parsed = this.parseAiQuizQuestions(
+        this.extractMessageText(response.content),
+      );
+
+      return parsed.map((question, index) => ({
+        ...question,
+        questionIndex: index,
+        sourceChunkId: this.findMatchingChunkId(
+          `${question.questionText} ${question.explanation}`,
+          sourceChunks,
+        ),
+      }));
+    } catch (error) {
+      console.error(
+        'AI quiz generation failed. Falling back to rule-based quiz:',
+        error,
+      );
+      return [];
+    }
+  }
+
+  private buildMathQuizPrompt(
+    summary: SummaryInput,
+    sourceChunks: SourceChunk[],
+  ): string {
+    const keyPoints = this.normalizeStringArray(summary.keyPoints);
+    const mainTopics = this.normalizeStringArray(summary.mainTopics);
+    const evidence = this.buildChunkEvidence(sourceChunks);
+
+    return `Bạn là hệ thống tạo câu hỏi trắc nghiệm cho video học toán.
+
+Nhiệm vụ:
+- Tạo đúng ${this.totalQuestions} câu hỏi trắc nghiệm tiếng Việt.
+- Mỗi câu có 4 lựa chọn A, B, C, D và chỉ 1 đáp án đúng.
+- Câu hỏi phải dựa trực tiếp trên SUMMARY và SOURCE_CHUNKS.
+- Ưu tiên câu hỏi kiểm tra hiểu bản chất, công thức, điều kiện áp dụng, bước biến đổi và lỗi sai thường gặp.
+- Nếu dữ kiện trong transcript không đủ, hãy hỏi về phần có đủ bằng chứng thay vì suy đoán.
+
+Quy tắc bắt buộc:
+1. Không tạo câu hỏi ngoài nội dung transcript/summary.
+2. Không tạo đáp án nhiễu vô nghĩa như "lựa chọn phụ" hoặc "không được nêu" nếu không cần thiết.
+3. Đáp án nhiễu phải hợp lý nhưng sai rõ ràng dựa trên nội dung học.
+4. Giải thích phải nêu vì sao đáp án đúng, ngắn gọn, dựa trên nguồn.
+5. Không dùng câu hỏi mơ hồ kiểu "nội dung nào được hỗ trợ rõ nhất".
+6. Nếu có công thức hoặc điều kiện xác định, phải giữ chính xác.
+
+Chỉ trả về JSON hợp lệ, không bọc markdown:
+{
+  "questions": [
+    {
+      "questionText": "Câu hỏi tự nhiên, rõ ràng",
+      "options": {
+        "A": "Lựa chọn A",
+        "B": "Lựa chọn B",
+        "C": "Lựa chọn C",
+        "D": "Lựa chọn D"
+      },
+      "correctOption": "A",
+      "explanation": "Giải thích ngắn gọn dựa trên summary/chunk"
+    }
+  ]
+}
+
+SUMMARY:
+Key points:
+${keyPoints.map((point, index) => `${index + 1}. ${point}`).join('\n')}
+
+Main topics:
+${mainTopics.map((topic, index) => `${index + 1}. ${topic}`).join('\n')}
+
+Simplified text:
+${summary.simplifiedText}
+
+SOURCE_CHUNKS:
+${evidence}`;
+  }
+
+  private buildRuleMiniTestQuestions(
+    summary: SummaryInput,
+    sourceChunks: SourceChunk[],
   ): MiniTestQuestion[] {
     const keyPoints = this.normalizeStringArray(summary.keyPoints);
     const mainTopics = this.normalizeStringArray(summary.mainTopics);
@@ -213,7 +356,7 @@ export class QuizService {
     keyPoints: string[],
     mainTopics: string[],
     sentences: string[],
-    sourceChunks: Awaited<ReturnType<PrismaService['chunk']['findMany']>>,
+    sourceChunks: SourceChunk[],
   ): QuestionSource[] {
     const sources: QuestionSource[] = [
       ...sourceChunks.slice(0, 10).map((chunk) => ({
@@ -277,7 +420,7 @@ export class QuizService {
 
   private questionTextForSource(source: QuestionSource, index: number): string {
     if (source.kind === 'chunk') {
-      return `Câu ${index + 1}: Nội dung nào được transcript video hỗ trợ rõ ràng nhất?`;
+      return `Câu ${index + 1}: Ý nào sau đây được nêu trực tiếp trong transcript video?`;
     }
 
     if (source.kind === 'topic') {
@@ -300,7 +443,7 @@ export class QuizService {
     correctOption: QuizOption,
   ): string {
     if (source.kind === 'chunk') {
-      return `Đáp án ${correctOption} đúng vì nội dung này được hỗ trợ trực tiếp bởi một chunk transcript của video.`;
+      return `Đáp án ${correctOption} đúng vì nội dung này xuất hiện trực tiếp trong transcript video.`;
     }
 
     if (source.kind === 'topic') {
@@ -329,10 +472,10 @@ export class QuizService {
       );
 
     const defaults = [
-      'Một nội dung không được nêu trong summary',
-      'Một bước giải không liên quan đến video',
+      'Một bước biến đổi không được transcript hỗ trợ',
       'Một kết luận không dựa trên nội dung đã học',
-      'Một ví dụ nằm ngoài phần tóm tắt',
+      'Một điều kiện áp dụng khác với nội dung video',
+      'Một công thức không xuất hiện trong phần tóm tắt',
       'Một chủ đề khác với trọng tâm video',
     ];
 
@@ -353,7 +496,7 @@ export class QuizService {
     ordered.splice(letters.indexOf(correctOption), 0, correctAnswer);
 
     while (ordered.length < 4) {
-      ordered.push(`Lựa chọn phụ ${ordered.length + 1}`);
+      ordered.push('Một lựa chọn không có đủ bằng chứng trong video');
     }
 
     return {
@@ -362,6 +505,138 @@ export class QuizService {
       C: ordered[2],
       D: ordered[3],
     };
+  }
+
+  private buildChunkEvidence(sourceChunks: SourceChunk[]): string {
+    let totalChars = 0;
+    const evidence: string[] = [];
+
+    for (const chunk of sourceChunks) {
+      const content = this.truncateWords(chunk.content, 160);
+      const entry = `[chunk ${chunk.chunkIndex}] ${content}`;
+
+      if (totalChars + entry.length > this.aiQuizMaxChars) {
+        break;
+      }
+
+      evidence.push(entry);
+      totalChars += entry.length;
+    }
+
+    return evidence.join('\n\n');
+  }
+
+  private parseAiQuizQuestions(content: string): AiQuizQuestion[] {
+    const jsonText = this.extractJsonObject(content);
+    const parsed: unknown = JSON.parse(jsonText);
+
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      !('questions' in parsed) ||
+      !Array.isArray(parsed.questions)
+    ) {
+      throw new Error('AI quiz response does not match the expected schema.');
+    }
+
+    return parsed.questions
+      .map((question) => this.parseAiQuizQuestion(question))
+      .filter((question): question is AiQuizQuestion => question !== null)
+      .slice(0, this.totalQuestions);
+  }
+
+  private parseAiQuizQuestion(value: unknown): AiQuizQuestion | null {
+    if (typeof value !== 'object' || value === null) {
+      return null;
+    }
+
+    const record = value as Record<string, unknown>;
+    const questionText =
+      typeof record.questionText === 'string' ? record.questionText.trim() : '';
+    const explanation =
+      typeof record.explanation === 'string' ? record.explanation.trim() : '';
+    const correctOption = this.parseQuizOption(record.correctOption);
+    const options = this.parseAiOptions(record.options);
+
+    if (!questionText || !explanation || !correctOption || !options) {
+      return null;
+    }
+
+    return {
+      questionText,
+      options,
+      correctOption,
+      explanation,
+    };
+  }
+
+  private parseAiOptions(value: unknown): Record<QuizOption, string> | null {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      return null;
+    }
+
+    const record = value as Record<string, unknown>;
+    const options = {
+      A: typeof record.A === 'string' ? record.A.trim() : '',
+      B: typeof record.B === 'string' ? record.B.trim() : '',
+      C: typeof record.C === 'string' ? record.C.trim() : '',
+      D: typeof record.D === 'string' ? record.D.trim() : '',
+    };
+
+    if (!options.A || !options.B || !options.C || !options.D) {
+      return null;
+    }
+
+    return options;
+  }
+
+  private parseQuizOption(value: unknown): QuizOption | null {
+    if (value === 'A' || value === 'B' || value === 'C' || value === 'D') {
+      return value;
+    }
+
+    return null;
+  }
+
+  private extractJsonObject(text: string): string {
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+
+    if (start === -1 || end === -1 || end <= start) {
+      throw new Error('AI quiz response did not contain a JSON object.');
+    }
+
+    return text.slice(start, end + 1);
+  }
+
+  private extractMessageText(content: unknown): string {
+    if (typeof content === 'string') {
+      return content;
+    }
+
+    if (Array.isArray(content)) {
+      return content
+        .map((item) => {
+          if (this.isTextContentPart(item)) {
+            return item.text;
+          }
+
+          return '';
+        })
+        .join('\n');
+    }
+
+    return String(content);
+  }
+
+  private isTextContentPart(value: unknown): value is { text: string } {
+    if (typeof value !== 'object' || value === null || !('text' in value)) {
+      return false;
+    }
+
+    const candidate = value as Record<string, unknown>;
+
+    return typeof candidate.text === 'string';
   }
 
   private pickCorrectOption(index: number): QuizOption {
@@ -405,7 +680,7 @@ export class QuizService {
 
   private findMatchingChunkId(
     text: string,
-    chunks: Awaited<ReturnType<PrismaService['chunk']['findMany']>>,
+    chunks: SourceChunk[],
   ): string | null {
     const normalizedText = this.normalizeForCompare(text);
 
