@@ -1,0 +1,21 @@
+{
+  "videoId": "replace-with-video-id",
+  "questions": [
+    {
+      "id": "main-concept",
+      "question": "Video nay giai thich khai niem chinh nao?",
+      "expectedOutput": "Replace this with the ideal grounded answer from the video.",
+      "expectedKeywords": ["replace", "with", "important", "terms"],
+      "forbiddenKeywords": ["noi dung khong co trong video"],
+      "expectedAnswerable": true
+    },
+    {
+      "id": "out-of-scope",
+      "question": "Video co noi ve chu de hoan toan khac nay khong?",
+      "expectedOutput": "The answer should say the requested topic is not found in the video evidence.",
+      "expectedKeywords": ["khong co", "khong tim thay", "video khong"],
+      "forbiddenKeywords": ["khong dung su that"],
+      "expectedAnswerable": false
+    }
+  ]
+}

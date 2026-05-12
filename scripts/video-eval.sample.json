@@ -1,0 +1,21 @@
+{
+  "videoId": "replace-with-video-id",
+  "summaryAssessmentQuestions": [
+    "Does the summary preserve the main learning objective of the video?",
+    "Does the summary include the key formulas, definitions, or steps explained in the video?",
+    "Does the summary avoid adding facts that are not supported by the video transcript?"
+  ],
+  "truthsExtractionLimit": 20,
+  "questions": [
+    {
+      "id": "main-concept",
+      "question": "Video nay giai thich khai niem chinh nao?",
+      "expectedOutput": "Replace this with the ideal grounded answer from the video."
+    },
+    {
+      "id": "worked-example",
+      "question": "Video giai bai mau theo cac buoc nao?",
+      "expectedOutput": "Replace this with the correct steps from the video."
+    }
+  ]
+}
