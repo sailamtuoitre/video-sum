@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Trash2 } from 'lucide-react';
 import { api } from '../services/api';
 import { isValidYoutubeUrl, formatDuration, formatDate } from '../lib/utils';
 import { cn } from '../lib/utils';
@@ -52,6 +53,19 @@ export default function HomePage() {
     },
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: api.deleteVideo,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['videos'] });
+    },
+    onError: (err: unknown) => {
+      const msg =
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
+        'Không thể xóa video. Vui lòng thử lại.';
+      setError(msg);
+    },
+  });
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = url.trim();
@@ -65,6 +79,18 @@ export default function HomePage() {
     }
     setError('');
     createMutation.mutate(trimmed);
+  };
+
+  const handleDeleteVideo = (videoId: string, title: string | null) => {
+    const label = title || 'video này';
+    const confirmed = window.confirm(`Bạn có chắc muốn xóa "${label}" không?`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    setError('');
+    deleteMutation.mutate(videoId);
   };
 
   return (
@@ -153,49 +179,58 @@ export default function HomePage() {
 
         {videos && videos.length > 0 && (
           <div className="grid gap-3">
-            {videos.map((v, i) => (
-              <Link
-                key={v.id}
-                to={`/video/${v.id}`}
-                className={cn(
-                  'block p-5 rounded-xl border border-parchment-light bg-parchment',
-                  'hover:border-gold-dim hover:bg-parchment-hover transition-all duration-200',
-                  'animate-fade-up',
-                )}
-                style={{ animationDelay: `${i * 60}ms` }}
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1 min-w-0">
-                    <h4 className="font-display text-base font-medium text-ink line-clamp-2">
-                      {v.title || 'Video không có tiêu đề'}
-                    </h4>
-                    <div className="flex items-center gap-3 mt-2">
-                      <span className={cn('text-xs px-2.5 py-0.5 rounded-full font-medium', statusColors[v.status])}>
-                        {statusLabels[v.status] || v.status}
-                      </span>
-                      {v.durationSec && (
-                        <span className="text-xs text-ink-faint">{formatDuration(v.durationSec)}</span>
+            {videos.map((v, i) => {
+              const isDeleting = deleteMutation.isPending && deleteMutation.variables === v.id;
+
+              return (
+                <div
+                  key={v.id}
+                  className={cn(
+                    'p-5 rounded-xl border border-parchment-light bg-parchment',
+                    'hover:border-gold-dim hover:bg-parchment-hover transition-all duration-200',
+                    'animate-fade-up',
+                    isDeleting && 'opacity-60',
+                  )}
+                  style={{ animationDelay: `${i * 60}ms` }}
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <Link to={`/video/${v.id}`} className="group/link block">
+                        <h4 className="font-display text-base font-medium text-ink line-clamp-2 group-hover/link:text-gold transition-colors">
+                          {v.title || 'Video không có tiêu đề'}
+                        </h4>
+                      </Link>
+                      <div className="flex items-center gap-3 mt-2">
+                        <span className={cn('text-xs px-2.5 py-0.5 rounded-full font-medium', statusColors[v.status])}>
+                          {statusLabels[v.status] || v.status}
+                        </span>
+                        {v.durationSec && (
+                          <span className="text-xs text-ink-faint">{formatDuration(v.durationSec)}</span>
+                        )}
+                        <span className="text-xs text-ink-faint">{formatDate(v.createdAt)}</span>
+                      </div>
+                      {v.errorMessage && (
+                        <p className="mt-2 text-xs text-ember line-clamp-1">{v.errorMessage}</p>
                       )}
-                      <span className="text-xs text-ink-faint">{formatDate(v.createdAt)}</span>
                     </div>
-                    {v.errorMessage && (
-                      <p className="mt-2 text-xs text-ember line-clamp-1">{v.errorMessage}</p>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteVideo(v.id, v.title)}
+                      disabled={deleteMutation.isPending}
+                      aria-label={`Xóa ${v.title || 'video'}`}
+                      title="Xóa video"
+                      className={cn(
+                        'shrink-0 mt-0.5 inline-flex h-9 w-9 items-center justify-center rounded-lg',
+                        'text-ink-faint hover:text-ember hover:bg-ember/10 transition-colors',
+                        'disabled:cursor-not-allowed disabled:opacity-50',
+                      )}
+                    >
+                      <Trash2 size={17} strokeWidth={1.7} />
+                    </button>
                   </div>
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    className="text-ink-faint shrink-0 mt-1"
-                  >
-                    <path d="M9 18l6-6-6-6" />
-                  </svg>
                 </div>
-              </Link>
-            ))}
+              );
+            })}
           </div>
         )}
       </section>

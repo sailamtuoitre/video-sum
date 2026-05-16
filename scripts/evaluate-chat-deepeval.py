@@ -15,6 +15,105 @@ DEFAULT_EVAL_SET = "scripts/chat-eval.sample.json"
 DEFAULT_MODEL = "gpt-4.1"
 
 
+def load_env_file(path=".env"):
+    env_path = Path(path)
+    if not env_path.exists():
+        return
+
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+
+        key, value = stripped.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+class GroqDeepEvalModel:
+    def __init__(self, model):
+        try:
+            from deepeval.models.base_model import DeepEvalBaseLLM
+            from openai import AsyncOpenAI, OpenAI
+        except ImportError as exc:
+            raise RuntimeError(
+                "Groq judge mode requires deepeval and openai in the Python environment."
+            ) from exc
+
+        class _GroqModel(DeepEvalBaseLLM):
+            def __init__(self, model_name):
+                self.model_name = model_name
+                self.client = OpenAI(
+                    api_key=os.getenv("GROQ_API_KEY"),
+                    base_url=os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
+                )
+                self.async_client = AsyncOpenAI(
+                    api_key=os.getenv("GROQ_API_KEY"),
+                    base_url=os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
+                )
+                super().__init__(model_name)
+
+            def load_model(self):
+                return self.client
+
+            def get_model_name(self):
+                return f"groq:{self.model_name}"
+
+            def supports_json_mode(self):
+                return True
+
+            def generate(self, prompt, schema=None):
+                if not os.getenv("GROQ_API_KEY"):
+                    raise RuntimeError("GROQ_API_KEY is required for Groq DeepEval judge mode.")
+
+                kwargs = self._request_kwargs(prompt, schema)
+                response = self.client.chat.completions.create(**kwargs)
+                content = response.choices[0].message.content or ""
+                return self._parse_schema(content, schema)
+
+            async def a_generate(self, prompt, schema=None):
+                if not os.getenv("GROQ_API_KEY"):
+                    raise RuntimeError("GROQ_API_KEY is required for Groq DeepEval judge mode.")
+
+                kwargs = self._request_kwargs(prompt, schema)
+                response = await self.async_client.chat.completions.create(**kwargs)
+                content = response.choices[0].message.content or ""
+                return self._parse_schema(content, schema)
+
+            def _request_kwargs(self, prompt, schema):
+                messages = [
+                    {
+                        "role": "system",
+                        "content": "Return only valid JSON when a JSON schema is requested.",
+                    },
+                    {"role": "user", "content": str(prompt)},
+                ]
+                kwargs = {
+                    "model": self.model_name,
+                    "messages": messages,
+                    "temperature": 0,
+                    "max_tokens": int(os.getenv("DEEPEVAL_JUDGE_MAX_TOKENS", "4096")),
+                }
+
+                if schema is not None:
+                    kwargs["response_format"] = {"type": "json_object"}
+
+                return kwargs
+
+            def _parse_schema(self, content, schema):
+                if schema is None:
+                    return content
+
+                if hasattr(schema, "model_validate_json"):
+                    return schema.model_validate_json(content)
+
+                return schema.parse_raw(content)
+
+        self.model = _GroqModel(model)
+
+    def __getattr__(self, name):
+        return getattr(self.model, name)
+
+
 def load_deepeval():
     try:
         from deepeval.metrics import (
@@ -356,9 +455,14 @@ def print_summary(report):
 
 
 def main():
+    load_env_file()
     args = parse_args()
 
-    if not os.getenv("OPENAI_API_KEY"):
+    model = args.model
+    if model.startswith("groq:"):
+        model_name = model.split(":", 1)[1]
+        model = GroqDeepEvalModel(model_name).model
+    elif not os.getenv("OPENAI_API_KEY"):
         print(
             "Warning: OPENAI_API_KEY is not set. DeepEval's default judge models require it.",
             file=sys.stderr,
@@ -416,7 +520,7 @@ def main():
                     response,
                     metric_names,
                     args.threshold,
-                    args.model,
+                    model,
                 )
             )
 
@@ -435,7 +539,7 @@ def main():
             chunks,
             eval_set,
             args.threshold,
-            args.model,
+            model,
         )
 
     all_scores = [
@@ -453,7 +557,7 @@ def main():
         "mode": args.mode,
         "sessionId": session["id"] if session else None,
         "videoId": video_id,
-        "model": args.model,
+        "model": model.get_model_name() if hasattr(model, "get_model_name") else args.model,
         "threshold": args.threshold,
         "metrics": metric_names,
         "averageScore": round(sum(all_scores) / len(all_scores), 4)

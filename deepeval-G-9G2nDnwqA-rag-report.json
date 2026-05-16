@@ -1,0 +1,51 @@
+{
+  "generatedAt": "2026-05-15T06:24:42.819834+00:00",
+  "apiBaseUrl": "http://localhost:3000",
+  "evalSetPath": "C:\\Users\\leduc\\OneDrive\\Desktop\\video-sum\\scripts\\chat-eval.sample.json",
+  "mode": "rag",
+  "sessionId": "56951e71-b16d-4658-8824-b2da32a3c111",
+  "videoId": "2ad78622-c797-4d42-8360-3b513347056f",
+  "model": "groq:llama-3.3-70b-versatile",
+  "threshold": 0.7,
+  "metrics": [
+    "answer_relevancy"
+  ],
+  "averageScore": 0.5416,
+  "ragResults": [
+    {
+      "id": "main-concept",
+      "question": "Video nay giai thich khai niem chinh nao?",
+      "expectedOutput": "Replace this with the ideal grounded answer from the video.",
+      "answer": "Tôi không hiểu rõ câu hỏi của bạn, nhưng dựa trên văn bản bạn cung cấp, có vẻ như video này đang giải thích về khái niệm \"tích vô hướng\" trong toán học.",
+      "retrievalContextCount": 4,
+      "averageScore": 0.75,
+      "metrics": [
+        {
+          "name": "AnswerRelevancyMetric",
+          "score": 0.75,
+          "threshold": 0.7,
+          "success": true,
+          "reason": "The score is 0.75 because the output partially addresses the input question, but is brought down by a statement that shows a lack of understanding, preventing it from being fully relevant."
+        }
+      ]
+    },
+    {
+      "id": "out-of-scope",
+      "question": "Video co noi ve chu de hoan toan khac nay khong?",
+      "expectedOutput": "The answer should say the requested topic is not found in the video evidence.",
+      "answer": "Tôi không thể tìm thấy bất kỳ thông tin nào liên quan đến một video cụ thể về chủ đề \"hoàn toàn khác nhau\" trong văn bản bạn cung cấp. Văn bản này dường như là một đoạn ghi chú hoặc ghi chép từ một bài học về vectơ và không có thông tin liên quan đến một video hoặc chủ đề cụ thể.",
+      "retrievalContextCount": 4,
+      "averageScore": 0.3333,
+      "metrics": [
+        {
+          "name": "AnswerRelevancyMetric",
+          "score": 0.3333333333333333,
+          "threshold": 0.7,
+          "success": false,
+          "reason": "The score is 0.33 because the actual output lacks relevant information about the video and its topic, with statements explicitly stating the absence of related content, but still attempts to address the input question, albeit poorly."
+        }
+      ]
+    }
+  ],
+  "summaryResult": null
+}

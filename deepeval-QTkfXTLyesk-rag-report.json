@@ -1,0 +1,68 @@
+{
+  "generatedAt": "2026-05-15T09:15:33.252663+00:00",
+  "apiBaseUrl": "http://localhost:3000",
+  "evalSetPath": "C:\\Users\\leduc\\OneDrive\\Desktop\\video-sum\\scripts\\eval-QTkfXTLyesk.json",
+  "mode": "rag",
+  "sessionId": "b444b072-676b-443e-a861-e71f484460a9",
+  "videoId": "7070a8cf-01f2-40a1-8e5b-10677606f943",
+  "model": "groq:llama-3.1-8b-instant",
+  "threshold": 0.7,
+  "metrics": [
+    "answer_relevancy"
+  ],
+  "averageScore": 0.6878,
+  "ragResults": [
+    {
+      "id": "sphere-standard-form",
+      "question": "Phuong trinh mat cau dang chuan trong khong gian Oxyz la gi, va tam ban kinh duoc xac dinh nhu the nao?",
+      "expectedOutput": "Phuong trinh mat cau dang chuan co dang (x - a)^2 + (y - b)^2 + (z - c)^2 = R^2, trong do tam la I(a, b, c) va ban kinh la R.",
+      "answer": "Phương trình mặt cầu dạng chuẩn trong không gian Oxyz có thể được viết như sau:\n\nx^2 + y^2 + z^2 - 2gx - 2fy - 2hz + d = 0\n\nTrong đó:\n\n- (g, f, h) là vị trí tâm của mặt cầu\n- d là bán kính của mặt cầu\n\nĐể xác định tâm và bán kính của mặt cầu, ta cần thực hiện một số phép toán với phương trình trên.\n\nTrước hết, ta chuyển phương trình thành dạng:\n\n(x - g)^2 + (y - f)^2 + (z - h)^2 = g^2 + f^2 + h^2 - d\n\nTừ đây, ta có thể xác định tâm của mặt cầu là (g, f, h) và bán kính là √(g^2 + f^2 + h^2 - d)\n\nTuy nhiên, trong trường hợp phương trình mặt cầu được cho không có dạng chuẩn, ta cần thực hiện một số phép toán khác để đưa nó về dạng chuẩn.\n\nTrong trường hợp này, phương trình mặt cầu là:\n\nx^2 + y^2 + z^2 - 2x - 4y - 6z + 5 = 0\n\nTa có thể chuyển phương trình này về dạng chuẩn bằng cách thực hiện các bước sau:\n\n1. Chia phương trình cho 1 để loại bỏ dấu trừ:\n\nx^2 + y^2 + z^2 - 2x - 4y - 6z = -5\n2. Hoán đổi các hạng mục để sắp xếp phương trình theo thứ tự tăng dần của x^2, y^2, z^2:\n\nx^2 - 2x + y^2 - 4y + z^2 - 6z = -5\n3. Thêm (1/2)^2, (-2)^2, và (-3)^2 vào mỗi hạng mục để hoàn thành bình phương:\n\n(x^2 - 2x + 1) + (y^2 - 4y + 4) + (z^2 - 6z + 9) = -5 + 1 + 4 + 9\n4. Hoán đổi các hạng mục để sắp xếp phương trình theo thứ tự tăng dần của x^2, y^2, z^2:\n\n(x - 1)^2 + (y - 2)^2 + (z - 3)^2 = 9\n\nTừ đây, ta có thể xác định tâm của mặt cầu là (1, 2, 3) và bán kính là √9 = 3.",
+      "retrievalContextCount": 4,
+      "averageScore": 0.5714,
+      "metrics": [
+        {
+          "name": "AnswerRelevancyMetric",
+          "score": 0.5714285714285714,
+          "threshold": 0.7,
+          "success": false,
+          "reason": "The score is 0.57 because the actual output contains 6 irrelevant statements about converting the equation to standard form, which is not relevant to the question about the equation of a standard sphere in 3D space."
+        }
+      ]
+    },
+    {
+      "id": "sphere-general-form-condition",
+      "question": "Khi viet phuong trinh mat cau dang tong quat, dieu kien nao de phuong trinh thuc su la mot mat cau?",
+      "expectedOutput": "Voi dang x^2 + y^2 + z^2 + 2ax + 2by + 2cz + d = 0, tam la (-a, -b, -c), ban kinh la sqrt(a^2 + b^2 + c^2 - d), va dieu kien la a^2 + b^2 + c^2 - d > 0.",
+      "answer": "Để viết phương trình mặt cầu dạng tổng quát, ta cần các thông số sau:\n\n* Tâm của mặt cầu: I(x0, y0, z0)\n* Bán kính của mặt cầu: R\n\nPhương trình mặt cầu dạng tổng quát là:\n\n(x - x0)^2 + (y - y0)^2 + (z - z0)^2 = R^2\n\nLàm thế nào để phương trình này là một mặt cầu?\n\nĐáp án:\n\nĐể phương trình này là một mặt cầu, ta cần có điều kiện sau:\n\n(x - x0)^2 + (y - y0)^2 + (z - z0)^2 ≠ 0\n\nHoặc:\n\n(x - x0)^2 + (y - y0)^2 + (z - z0)^2 < R^2\n\nđó không phải là điều kiện cần thiết.\n\nVì nó không phải là điều kiện cần thiết nên ta có thể kết luận điều kiện cần thiết để phương trình trên là một mặt cầu là:\n\n- (x - x0)^2 + (y - y0)^2 + (z - z0)^2 phải luôn luôn dương\n- (x - x0)^2 + (y - y0)^2 + (z - z0)^2 = R^2",
+      "retrievalContextCount": 4,
+      "averageScore": 0.7143,
+      "metrics": [
+        {
+          "name": "AnswerRelevancyMetric",
+          "score": 0.7142857142857143,
+          "threshold": 0.7,
+          "success": true,
+          "reason": "The score is 0.71 because the actual output contains irrelevant statements about the necessity of a condition for the equation to be a sphere, which is unrelated to the question about the conditions for a quadratic equation to be a circle."
+        }
+      ]
+    },
+    {
+      "id": "sphere-from-center-point",
+      "question": "Neu biet tam mat cau va mot diem nam tren mat cau thi lap phuong trinh mat cau theo cac buoc nao?",
+      "expectedOutput": "Tinh ban kinh bang khoang cach tu tam den diem nam tren mat cau, sau do thay toa do tam va R^2 vao dang (x - a)^2 + (y - b)^2 + (z - c)^2 = R^2.",
+      "answer": "Để viết phương trình mặt cầu, chúng ta cần có tâm (I) và bán kính (R) của mặt cầu.\n\nBước 1: Viết phương trình mặt cầu theo công thức chung:\n(x - xI)^2 + (y - yI)^2 + (z - zI)^2 = R^2\n\nvới (xI, yI, zI) là tọa độ điểm tâm I của mặt cầu, và R là bán kính của mặt cầu.\n\nBước 2: Lấy tọa độ điểm I và bán kính R để điền vào công thức.\n\nVí dụ, nếu tọa độ điểm I là (xI, yI, zI) = (0, 0, 0) và bán kính R = 10, thì phương trình mặt cầu sẽ là:\nx^2 + y^2 + z^2 = 100\n\nTrong trường hợp bạn đã cho, tọa độ điểm O của mặt cầu S là (0, 0, 10), và ta cần viết phương trình mặt cầu này theo tọa độ điểm A, B, C. Để làm được điều này, ta cần có tọa độ của các điểm A, B, C, và bán kính R của mặt cầu.\n\nNếu bạn cung cấp thêm thông tin về tọa độ của các điểm A, B, C, và bán kính R của mặt cầu S, tôi có thể giúp bạn viết phương trình mặt cầu theo các bước trên.",
+      "retrievalContextCount": 4,
+      "averageScore": 0.7778,
+      "metrics": [
+        {
+          "name": "AnswerRelevancyMetric",
+          "score": 0.7777777777777778,
+          "threshold": 0.7,
+          "success": true,
+          "reason": "The score is 0.78 because the actual output provided a specific example of a sphere's equation, but failed to provide general information on how to write the equation of a sphere, resulting in a lower score."
+        }
+      ]
+    }
+  ],
+  "summaryResult": null
+}

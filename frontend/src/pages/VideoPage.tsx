@@ -99,7 +99,7 @@ export default function VideoPage() {
         <>
           {summaryLoading && (
             <section className="space-y-4">
-              <h2 className="font-display text-xl font-medium text-gold">TÃ³m táº¯t</h2>
+              <h2 className="font-display text-xl font-medium text-gold">Tóm tắt</h2>
               <div className="space-y-3">
                 <div className="h-5 w-1/3 shimmer rounded-lg" />
                 <div className="h-24 shimmer rounded-xl" />
@@ -195,7 +195,6 @@ export default function VideoPage() {
                   10 câu hỏi trắc nghiệm từ nội dung video. Kiểm tra kiến thức của bạn.
                 </p>
               </Link>
-
             </div>
           </section>
         </>
@@ -208,7 +207,7 @@ export default function VideoPage() {
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>
-            <span className="font-body text-sm">Đang xử lý video — trích xuất transcript và tạo tóm tắt...</span>
+            <span className="font-body text-sm">Đang xử lý video - trích xuất transcript và tạo tóm tắt...</span>
           </div>
           <p className="text-xs text-ink-faint">Quá trình này có thể mất 30-120 giây tùy độ dài video.</p>
         </div>

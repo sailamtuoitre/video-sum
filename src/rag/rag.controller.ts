@@ -6,7 +6,7 @@ dotenv.config();
 
 @Controller()
 export class RagController {
-  constructor(private readonly ragService: RagService) {}
+  constructor(private readonly appService: RagService) { }
 
   @Get()
   @Render('index')
@@ -27,10 +27,7 @@ export class RagController {
     }
 
     try {
-      const result = await this.ragService.processLinksAndAnswerQuestion(
-        urls,
-        question,
-      );
+      const result = await this.appService.processLinksAndAnswerQuestion(urls, question);
       return result;
     } catch (error) {
       return {
@@ -52,7 +49,7 @@ export class RagController {
     }
 
     try {
-      const result = await this.ragService.answerQuestion(question);
+      const result = await this.appService.answerQuestion(question);
       return result;
     } catch (error) {
       return {

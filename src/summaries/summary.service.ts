@@ -3,37 +3,29 @@ import { ChatOpenAI } from '@langchain/openai';
 import { Prisma } from '@prisma/client';
 import { ChunkService } from '../chunks/chunk.service';
 import { PrismaService } from '../prisma/prisma.service';
-
-type SourceChunk = {
-  id?: string;
-  videoId: string;
-  transcriptId: string;
-  content: string;
-  chunkIndex: number;
-  tokenCount: number | null;
-  startChar: number | null;
-  endChar: number | null;
-};
-
-type SummaryDraft = {
-  keyPoints: string[];
-  simplifiedText: string;
-  mainTopics: string[];
-  modelUsed: string;
-  sourceChunkCount: number;
-  sourceWordCount: number;
-};
+import { SummaryConfigService } from './summary-config.service';
+import { SummaryPromptBuilder } from './summary-prompt.builder';
+import { SummaryTextService } from './summary-text.service';
+import {
+  CollapsedSummary,
+  MapSummary,
+  SourceChunk,
+  SummaryConfig,
+  SummaryDraft,
+  SummaryJson,
+} from './summary.types';
 
 @Injectable()
 export class SummaryService {
   private readonly sentenceLimit = 180;
-  private readonly chunkWordLimit = 180;
   private readonly sectionSize = 4;
-  private readonly aiSummaryMaxChars = 12000;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly chunkService: ChunkService,
+    private readonly configService: SummaryConfigService,
+    private readonly promptBuilder: SummaryPromptBuilder,
+    private readonly text: SummaryTextService,
   ) {}
 
   findAll(videoId?: string) {
@@ -95,6 +87,9 @@ export class SummaryService {
     });
     const fallbackDraft = this.buildSummaryDraft(sourceChunks);
     const draft = await this.buildAiSummaryDraft(sourceChunks, fallbackDraft);
+    const completionTokens = this.text.countWords(
+      [draft.simplifiedText, ...draft.keyPoints, ...draft.mainTopics].join(' '),
+    );
 
     return this.prisma.summary.upsert({
       where: {
@@ -107,11 +102,7 @@ export class SummaryService {
         mainTopics: draft.mainTopics,
         modelUsed: draft.modelUsed,
         promptTokens: draft.sourceWordCount,
-        completionTokens: this.countWords(
-          [draft.simplifiedText, ...draft.keyPoints, ...draft.mainTopics].join(
-            ' ',
-          ),
-        ),
+        completionTokens,
       },
       update: {
         keyPoints: draft.keyPoints,
@@ -119,11 +110,7 @@ export class SummaryService {
         mainTopics: draft.mainTopics,
         modelUsed: draft.modelUsed,
         promptTokens: draft.sourceWordCount,
-        completionTokens: this.countWords(
-          [draft.simplifiedText, ...draft.keyPoints, ...draft.mainTopics].join(
-            ' ',
-          ),
-        ),
+        completionTokens,
       },
     });
   }
@@ -171,12 +158,7 @@ export class SummaryService {
   }
 
   private buildSummaryDraft(chunks: SourceChunk[]): SummaryDraft {
-    const cleanChunks = chunks
-      .map((chunk) => ({
-        ...chunk,
-        content: this.normalizeWhitespace(chunk.content),
-      }))
-      .filter((chunk) => chunk.content.length > 0);
+    const cleanChunks = this.cleanChunks(chunks);
 
     if (cleanChunks.length === 0) {
       throw new NotFoundException('No transcript content found for summary');
@@ -197,19 +179,15 @@ export class SummaryService {
       sectionSummaries,
       keyPoints,
     );
-    const mainTopics = this.extractMainTopics(
-      cleanChunks.map((chunk) => chunk.content).join(' '),
-    );
+    const sourceText = cleanChunks.map((chunk) => chunk.content).join(' ');
 
     return {
       keyPoints,
       simplifiedText,
-      mainTopics,
+      mainTopics: this.extractMainTopics(sourceText),
       modelUsed: 'hierarchical-extractive-v2',
       sourceChunkCount: cleanChunks.length,
-      sourceWordCount: this.countWords(
-        cleanChunks.map((chunk) => chunk.content).join(' '),
-      ),
+      sourceWordCount: this.text.countWords(sourceText),
     };
   }
 
@@ -218,36 +196,34 @@ export class SummaryService {
     fallbackDraft: SummaryDraft,
   ): Promise<SummaryDraft> {
     const groqApiKey = process.env.GROQ_API_KEY;
+    const config = this.configService.getConfig();
 
-    if (!groqApiKey) {
+    if (!groqApiKey || config.mode === 'fallback') {
       return fallbackDraft;
     }
 
     try {
-      const model = process.env.GROQ_MODEL ?? 'llama-3.1-8b-instant';
-      const llm = new ChatOpenAI({
-        model,
-        apiKey: groqApiKey,
-        configuration: {
-          baseURL:
-            process.env.GROQ_BASE_URL ?? 'https://api.groq.com/openai/v1',
-        },
-        temperature: 0.1,
-        maxTokens: 1400,
-      });
+      const selectedChunks = this.selectSummaryChunks(chunks, config);
+      const shouldUseDirect =
+        config.mode === 'direct' ||
+        (config.mode === 'auto' &&
+          selectedChunks.length <= config.directMaxChunks);
 
-      const response = await llm.invoke(this.buildMathSummaryPrompt(chunks));
-      const parsed = this.parseAiSummaryContent(
-        this.extractMessageText(response.content),
+      if (shouldUseDirect) {
+        return await this.buildDirectAiSummaryDraft(
+          selectedChunks,
+          fallbackDraft,
+          config,
+          groqApiKey,
+        );
+      }
+
+      return await this.buildMapReduceSummaryDraft(
+        selectedChunks,
+        fallbackDraft,
+        config,
+        groqApiKey,
       );
-
-      return {
-        ...fallbackDraft,
-        keyPoints: parsed.keyPoints,
-        simplifiedText: parsed.simplifiedText,
-        mainTopics: parsed.mainTopics,
-        modelUsed: `groq:${model}:math-summary-v1`,
-      };
     } catch (error) {
       console.error(
         'AI summary failed. Falling back to extractive summary:',
@@ -257,102 +233,505 @@ export class SummaryService {
     }
   }
 
-  private buildMathSummaryPrompt(chunks: SourceChunk[]): string {
-    const evidence = this.buildChunkEvidence(chunks);
+  private async buildDirectAiSummaryDraft(
+    chunks: SourceChunk[],
+    fallbackDraft: SummaryDraft,
+    config: SummaryConfig,
+    groqApiKey: string,
+  ): Promise<SummaryDraft> {
+    const llm = this.createLlm(config, groqApiKey, config.reduceMaxTokens);
+    const response = await this.invokeLlmWithRetry(
+      () =>
+        llm.invoke(
+          this.promptBuilder.buildDirectSummaryPrompt(
+            chunks,
+            config.chunkWordLimit,
+          ),
+        ),
+      config,
+    );
+    const parsed = this.parseSummaryJson(
+      this.extractMessageText(response.content),
+    );
 
-    return `Bạn là một hệ thống tóm tắt nội dung học toán có độ chính xác cao.
-
-Nhiệm vụ:
-- Tóm tắt nội dung transcript theo đúng dữ kiện trong SOURCE_CHUNKS.
-- Nếu transcript có bài giải toán, hãy giữ lại các bước biến đổi quan trọng và lý do của từng bước.
-- Nếu transcript chỉ là giảng bài/lý thuyết, hãy tóm tắt khái niệm, công thức, điều kiện áp dụng và ví dụ được nêu.
-
-Quy tắc bắt buộc:
-1. Không được suy đoán.
-2. Nếu thiếu dữ kiện, phải nói rõ dữ kiện nào còn thiếu.
-3. Chỉ sử dụng công thức/toán lý đã được chứng minh hoặc chuẩn hóa.
-4. Mỗi bước biến đổi phải ghi rõ lý do nếu transcript có bài giải.
-5. Không bỏ qua bước tính quan trọng được nêu trong transcript.
-6. Sau khi tóm tắt bài giải, phải nêu phần kiểm tra lại kết quả, thay ngược vào đề nếu transcript có dữ kiện, và xác minh điều kiện xác định.
-7. Nếu transcript nêu nhiều cách giải, hãy liệt kê ngắn gọn, chọn cách tối ưu và giải thích vì sao.
-8. Nếu không chắc chắn ở bước nào, phải ghi: "Không đủ độ tin cậy để khẳng định bước này."
-
-Định dạng nội dung trong simplifiedText:
-- Phân tích đề bài
-- Điều kiện/giả thiết
-- Công thức sử dụng
-- Giải từng bước
-- Kiểm tra kết quả
-- Kết luận cuối cùng
-
-Không được tạo ra định lý, công thức hoặc dữ kiện không tồn tại.
-Không được trả lời kiểu có vẻ, có thể đúng nếu chưa kiểm chứng.
-
-Chỉ trả về JSON hợp lệ, không bọc markdown, không thêm giải thích ngoài JSON:
-{
-  "keyPoints": ["3 đến 6 ý chính, mỗi ý dựa trực tiếp trên SOURCE_CHUNKS"],
-  "simplifiedText": "Bản tóm tắt tiếng Việt theo đúng các mục định dạng ở trên. Nếu mục nào thiếu dữ kiện trong transcript, ghi rõ thiếu dữ kiện.",
-  "mainTopics": ["3 đến 10 chủ đề/toán dạng bài xuất hiện trong SOURCE_CHUNKS"]
-}
-
-SOURCE_CHUNKS:
-${evidence}`;
+    return {
+      ...fallbackDraft,
+      ...parsed,
+      modelUsed: `groq:${config.model}:math-summary-direct-v2`,
+    };
   }
 
-  private buildChunkEvidence(chunks: SourceChunk[]): string {
-    const cleanChunks = chunks
-      .map((chunk) => ({
-        ...chunk,
-        content: this.normalizeWhitespace(chunk.content),
-      }))
-      .filter((chunk) => chunk.content.length > 0);
+  private async buildMapReduceSummaryDraft(
+    chunks: SourceChunk[],
+    fallbackDraft: SummaryDraft,
+    config: SummaryConfig,
+    groqApiKey: string,
+  ): Promise<SummaryDraft> {
+    const mapSummaries = await this.buildMapSummaries(
+      chunks,
+      config,
+      groqApiKey,
+    );
+    const collapsedSummaries = await this.collapseMapSummariesIfNeeded(
+      mapSummaries,
+      config,
+      groqApiKey,
+    );
+    const reduced = await this.reduceSummaries(
+      collapsedSummaries,
+      config,
+      groqApiKey,
+    );
 
-    let totalChars = 0;
-    const evidence: string[] = [];
+    return {
+      ...fallbackDraft,
+      ...reduced,
+      modelUsed: `groq:${config.model}:math-summary-mapreduce-v1`,
+    };
+  }
 
-    for (const chunk of cleanChunks) {
-      const content = this.truncateWords(chunk.content, this.chunkWordLimit);
-      const entry = `[chunk ${chunk.chunkIndex}] ${content}`;
+  private async buildMapSummaries(
+    chunks: SourceChunk[],
+    config: SummaryConfig,
+    groqApiKey: string,
+  ): Promise<MapSummary[]> {
+    const groups = this.groupChunks(chunks, config.mapGroupSize);
+    const llm = this.createLlm(config, groqApiKey, config.mapMaxTokens);
+    const summaries: MapSummary[] = [];
 
-      if (totalChars + entry.length > this.aiSummaryMaxChars) {
-        break;
+    for (const [index, group] of groups.entries()) {
+      try {
+        const response = await this.invokeLlmWithRetry(
+          () =>
+            llm.invoke(
+              this.promptBuilder.buildMapSummaryPrompt(
+                index,
+                group,
+                config.chunkWordLimit,
+              ),
+            ),
+          config,
+        );
+        summaries.push(
+          this.parseMapSummary(this.extractMessageText(response.content), {
+            groupIndex: index,
+            chunks: group,
+          }),
+        );
+      } catch (error) {
+        console.error(`Map summary failed for group ${index}:`, error);
+        summaries.push(this.buildFallbackMapSummary(index, group));
       }
-
-      evidence.push(entry);
-      totalChars += entry.length;
     }
 
-    return evidence.join('\n\n');
+    return summaries;
   }
 
-  private parseAiSummaryContent(
-    content: string,
-  ): Pick<SummaryDraft, 'keyPoints' | 'simplifiedText' | 'mainTopics'> {
-    const jsonText = this.extractJsonObject(content);
-    const parsed: unknown = JSON.parse(jsonText);
+  private async collapseMapSummariesIfNeeded(
+    mapSummaries: MapSummary[],
+    config: SummaryConfig,
+    groqApiKey: string,
+  ): Promise<Array<MapSummary | CollapsedSummary>> {
+    if (mapSummaries.length <= config.collapseMaxGroups) {
+      return mapSummaries;
+    }
+
+    const groups = this.groupItems(mapSummaries, config.collapseMaxGroups);
+    const llm = this.createLlm(config, groqApiKey, config.collapseMaxTokens);
+    const collapsed: CollapsedSummary[] = [];
+
+    for (const [index, group] of groups.entries()) {
+      try {
+        const response = await this.invokeLlmWithRetry(
+          () =>
+            llm.invoke(
+              this.promptBuilder.buildCollapseSummaryPrompt(index, group),
+            ),
+          config,
+        );
+        collapsed.push(
+          this.parseCollapsedSummary(
+            this.extractMessageText(response.content),
+            group,
+          ),
+        );
+      } catch (error) {
+        console.error(`Collapse summary failed for batch ${index}:`, error);
+        collapsed.push(this.buildFallbackCollapsedSummary(group));
+      }
+    }
+
+    return collapsed;
+  }
+
+  private async reduceSummaries(
+    summaries: Array<MapSummary | CollapsedSummary>,
+    config: SummaryConfig,
+    groqApiKey: string,
+  ): Promise<SummaryJson> {
+    const llm = this.createLlm(config, groqApiKey, config.reduceMaxTokens);
+    const response = await this.invokeLlmWithRetry(
+      () => llm.invoke(this.promptBuilder.buildReduceSummaryPrompt(summaries)),
+      config,
+    );
+
+    return this.parseSummaryJson(this.extractMessageText(response.content));
+  }
+
+  private createLlm(
+    config: SummaryConfig,
+    groqApiKey: string,
+    maxTokens: number,
+  ) {
+    return new ChatOpenAI({
+      model: config.model,
+      apiKey: groqApiKey,
+      configuration: {
+        baseURL: config.baseUrl,
+      },
+      temperature: 0.1,
+      maxTokens,
+    });
+  }
+
+  private async invokeLlmWithRetry<T>(
+    invoke: () => Promise<T>,
+    config: SummaryConfig,
+  ): Promise<T> {
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt <= config.retryAttempts; attempt += 1) {
+      try {
+        return await invoke();
+      } catch (error) {
+        lastError = error;
+
+        if (
+          attempt >= config.retryAttempts ||
+          !this.isRetryableLlmError(error)
+        ) {
+          throw error;
+        }
+
+        const delayMs = this.getRetryDelayMs(error, attempt, config);
+        console.warn(
+          `Summary AI rate limited. Retrying in ${delayMs}ms ` +
+            `(attempt ${attempt + 1}/${config.retryAttempts}).`,
+        );
+        await this.sleep(delayMs);
+      }
+    }
+
+    throw lastError;
+  }
+
+  private isRetryableLlmError(error: unknown): boolean {
+    const record = this.toErrorRecord(error);
+    const status = record?.status;
+    const code = record?.code;
+    const lcErrorCode = record?.lc_error_code;
+
+    return (
+      status === 429 ||
+      code === 'rate_limit_exceeded' ||
+      lcErrorCode === 'MODEL_RATE_LIMIT'
+    );
+  }
+
+  private getRetryDelayMs(
+    error: unknown,
+    attempt: number,
+    config: SummaryConfig,
+  ): number {
+    const retryAfterMs = this.getRetryAfterMs(error);
+
+    if (retryAfterMs !== null) {
+      return retryAfterMs;
+    }
+
+    return config.retryBaseDelayMs * 2 ** attempt;
+  }
+
+  private getRetryAfterMs(error: unknown): number | null {
+    const headers = this.toErrorRecord(error)?.headers;
+
+    if (!headers || typeof headers !== 'object' || !('get' in headers)) {
+      return null;
+    }
+
+    const getHeader = headers.get;
+
+    if (typeof getHeader !== 'function') {
+      return null;
+    }
+
+    const retryAfter = getHeader.call(headers, 'retry-after') as unknown;
+
+    if (typeof retryAfter !== 'string') {
+      return null;
+    }
+
+    const seconds = Number.parseFloat(retryAfter);
+
+    if (!Number.isFinite(seconds) || seconds < 0) {
+      return null;
+    }
+
+    return Math.ceil(seconds * 1000);
+  }
+
+  private toErrorRecord(error: unknown): Record<string, unknown> | null {
+    if (typeof error !== 'object' || error === null) {
+      return null;
+    }
+
+    return error as Record<string, unknown>;
+  }
+
+  private sleep(delayMs: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+
+  private selectSummaryChunks(
+    chunks: SourceChunk[],
+    config: SummaryConfig,
+  ): SourceChunk[] {
+    const cleanChunks = this.cleanChunks(chunks);
+    const maxChunks = config.mapGroupSize * config.maxMapGroups;
+
+    if (cleanChunks.length <= maxChunks) {
+      return cleanChunks;
+    }
+
+    return cleanChunks
+      .map((chunk) => ({
+        chunk,
+        score: this.scoreChunk(chunk, cleanChunks.length),
+      }))
+      .sort(
+        (left, right) =>
+          right.score - left.score ||
+          left.chunk.chunkIndex - right.chunk.chunkIndex,
+      )
+      .slice(0, maxChunks)
+      .map((item) => item.chunk)
+      .sort((left, right) => left.chunkIndex - right.chunkIndex);
+  }
+
+  private scoreChunk(chunk: SourceChunk, totalChunks: number): number {
+    const normalized = this.text.normalizeForCompare(chunk.content);
+    let score = 0;
+
+    if (chunk.chunkIndex <= 1) {
+      score += 4;
+    }
+
+    if (chunk.chunkIndex >= totalChunks - 2) {
+      score += 3;
+    }
+
+    if (/[=+\-*/^<>]|\d/.test(chunk.content)) {
+      score += 4;
+    }
+
+    const mathKeywords = [
+      'bai toan',
+      'cong thuc',
+      'dieu kien',
+      'giai',
+      'ket luan',
+      'phuong trinh',
+      'vi du',
+      'dao ham',
+      'tich phan',
+      'hinh hoc',
+      'xac suat',
+      'he phuong trinh',
+    ];
+
+    for (const keyword of mathKeywords) {
+      if (normalized.includes(keyword)) {
+        score += 2;
+      }
+    }
+
+    const wordCount = this.text.countWords(chunk.content);
+
+    if (wordCount >= 40 && wordCount <= 220) {
+      score += 2;
+    }
+
+    return score;
+  }
+
+  private cleanChunks(chunks: SourceChunk[]): SourceChunk[] {
+    return chunks
+      .map((chunk) => ({
+        ...chunk,
+        content: this.text.normalizeWhitespace(chunk.content),
+      }))
+      .filter((chunk) => chunk.content.length > 0);
+  }
+
+  private groupChunks(chunks: SourceChunk[], groupSize: number) {
+    return this.groupItems(chunks, groupSize);
+  }
+
+  private groupItems<T>(items: T[], groupSize: number): T[][] {
+    const groups: T[][] = [];
+
+    for (let index = 0; index < items.length; index += groupSize) {
+      groups.push(items.slice(index, index + groupSize));
+    }
+
+    return groups;
+  }
+
+  private parseSummaryJson(content: string): SummaryJson {
+    const parsed = this.parseJsonObject(content);
 
     if (!this.isSummaryJson(parsed)) {
-      throw new Error(
-        'AI summary response does not match the expected schema.',
-      );
+      throw new Error('AI summary response does not match expected schema.');
     }
 
     return {
       keyPoints: this.cleanStringArray(parsed.keyPoints, 6),
-      simplifiedText: this.normalizeWhitespace(parsed.simplifiedText),
+      simplifiedText: this.text.normalizeWhitespace(parsed.simplifiedText),
       mainTopics: this.cleanStringArray(parsed.mainTopics, 10),
     };
   }
 
-  private extractJsonObject(text: string): string {
-    const start = text.indexOf('{');
-    const end = text.lastIndexOf('}');
+  private parseMapSummary(
+    content: string,
+    fallback: {
+      groupIndex: number;
+      chunks: SourceChunk[];
+    },
+  ): MapSummary {
+    const parsed = this.parseJsonObject(content);
 
-    if (start === -1 || end === -1 || end <= start) {
-      throw new Error('AI summary response did not contain a JSON object.');
+    if (!this.isMapSummaryJson(parsed)) {
+      throw new Error('Map summary response does not match expected schema.');
     }
 
-    return text.slice(start, end + 1);
+    return {
+      groupIndex: this.cleanNumber(parsed.groupIndex, fallback.groupIndex),
+      sourceChunkIndexes: this.cleanNumberArray(
+        parsed.sourceChunkIndexes,
+        fallback.chunks.map((chunk) => chunk.chunkIndex),
+      ),
+      keyIdeas: this.cleanStringArray(parsed.keyIdeas, 8),
+      importantFormulas: this.cleanStringArray(parsed.importantFormulas, 8),
+      solutionSteps: this.cleanStringArray(parsed.solutionSteps, 10),
+      missingInformation: this.cleanStringArray(parsed.missingInformation, 6),
+    };
+  }
+
+  private parseCollapsedSummary(
+    content: string,
+    fallbackGroup: MapSummary[],
+  ): CollapsedSummary {
+    const parsed = this.parseJsonObject(content);
+
+    if (!this.isCollapsedSummaryJson(parsed)) {
+      throw new Error(
+        'Collapsed summary response does not match expected schema.',
+      );
+    }
+
+    return {
+      groupIndexes: this.cleanNumberArray(
+        parsed.groupIndexes,
+        fallbackGroup.map((summary) => summary.groupIndex),
+      ),
+      sourceChunkIndexes: this.cleanNumberArray(
+        parsed.sourceChunkIndexes,
+        this.uniqueNumbers(
+          fallbackGroup.flatMap((summary) => summary.sourceChunkIndexes),
+        ),
+      ),
+      keyIdeas: this.cleanStringArray(parsed.keyIdeas, 10),
+      importantFormulas: this.cleanStringArray(parsed.importantFormulas, 10),
+      solutionSteps: this.cleanStringArray(parsed.solutionSteps, 12),
+      missingInformation: this.cleanStringArray(parsed.missingInformation, 8),
+    };
+  }
+
+  private parseJsonObject(text: string): unknown {
+    const candidates = this.extractJsonCandidates(text);
+
+    for (const candidate of candidates) {
+      try {
+        return JSON.parse(candidate) as unknown;
+      } catch {
+        continue;
+      }
+    }
+
+    throw new Error('AI response did not contain a valid JSON object.');
+  }
+
+  private extractJsonCandidates(text: string): string[] {
+    const candidates: string[] = [];
+    const fencedJson = /```(?:json)?\s*([\s\S]*?)```/gi;
+    let match: RegExpExecArray | null;
+
+    while ((match = fencedJson.exec(text)) !== null) {
+      if (match[1]) {
+        candidates.push(match[1].trim());
+      }
+    }
+
+    const balanced = this.extractBalancedJsonObjects(text);
+    candidates.push(...balanced);
+
+    return [...new Set(candidates.filter((candidate) => candidate.length > 0))];
+  }
+
+  private extractBalancedJsonObjects(text: string): string[] {
+    const candidates: string[] = [];
+    let start = -1;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let index = 0; index < text.length; index += 1) {
+      const char = text[index];
+
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (char === '\\') {
+          escaped = true;
+        } else if (char === '"') {
+          inString = false;
+        }
+
+        continue;
+      }
+
+      if (char === '"') {
+        inString = true;
+        continue;
+      }
+
+      if (char === '{') {
+        if (depth === 0) {
+          start = index;
+        }
+
+        depth += 1;
+      } else if (char === '}' && depth > 0) {
+        depth -= 1;
+
+        if (depth === 0 && start !== -1) {
+          candidates.push(text.slice(start, index + 1));
+          start = -1;
+        }
+      }
+    }
+
+    return candidates;
   }
 
   private extractMessageText(content: unknown): string {
@@ -402,93 +781,127 @@ ${evidence}`;
     );
   }
 
+  private isMapSummaryJson(value: unknown): value is {
+    groupIndex: unknown;
+    sourceChunkIndexes: unknown[];
+    keyIdeas: unknown[];
+    importantFormulas: unknown[];
+    solutionSteps: unknown[];
+    missingInformation: unknown[];
+  } {
+    return (
+      typeof value === 'object' &&
+      value !== null &&
+      'groupIndex' in value &&
+      'sourceChunkIndexes' in value &&
+      Array.isArray(value.sourceChunkIndexes) &&
+      'keyIdeas' in value &&
+      Array.isArray(value.keyIdeas) &&
+      'importantFormulas' in value &&
+      Array.isArray(value.importantFormulas) &&
+      'solutionSteps' in value &&
+      Array.isArray(value.solutionSteps) &&
+      'missingInformation' in value &&
+      Array.isArray(value.missingInformation)
+    );
+  }
+
+  private isCollapsedSummaryJson(value: unknown): value is {
+    groupIndexes: unknown[];
+    sourceChunkIndexes: unknown[];
+    keyIdeas: unknown[];
+    importantFormulas: unknown[];
+    solutionSteps: unknown[];
+    missingInformation: unknown[];
+  } {
+    return (
+      typeof value === 'object' &&
+      value !== null &&
+      'groupIndexes' in value &&
+      Array.isArray(value.groupIndexes) &&
+      'sourceChunkIndexes' in value &&
+      Array.isArray(value.sourceChunkIndexes) &&
+      'keyIdeas' in value &&
+      Array.isArray(value.keyIdeas) &&
+      'importantFormulas' in value &&
+      Array.isArray(value.importantFormulas) &&
+      'solutionSteps' in value &&
+      Array.isArray(value.solutionSteps) &&
+      'missingInformation' in value &&
+      Array.isArray(value.missingInformation)
+    );
+  }
+
   private cleanStringArray(values: unknown[], limit: number): string[] {
     return values
       .filter((value): value is string => typeof value === 'string')
-      .map((value) => this.normalizeWhitespace(value))
+      .map((value) => this.text.normalizeWhitespace(value))
       .filter((value) => value.length > 0)
       .slice(0, limit);
   }
 
-  private buildFallbackChunks(
-    rawText: string,
-    metadata: {
-      videoId: string;
-      transcriptId: string;
-    },
-  ): SourceChunk[] {
-    const sentences = this.splitSentences(rawText);
-    const chunks: SourceChunk[] = [];
-    let current: string[] = [];
-    let currentWords = 0;
-    let cursor = 0;
+  private cleanNumber(value: unknown, fallback: number): number {
+    return typeof value === 'number' && Number.isFinite(value)
+      ? value
+      : fallback;
+  }
 
-    for (const sentence of sentences) {
-      const wordCount = this.countWords(sentence);
-      const shouldFlush =
-        current.length > 0 && currentWords + wordCount > this.chunkWordLimit;
+  private cleanNumberArray(values: unknown[], fallback: number[]): number[] {
+    const clean = values.filter(
+      (value): value is number =>
+        typeof value === 'number' && Number.isFinite(value),
+    );
 
-      if (shouldFlush) {
-        const content = current.join(' ');
-        chunks.push({
-          ...metadata,
-          content,
-          chunkIndex: chunks.length,
-          tokenCount: currentWords,
-          startChar: cursor,
-          endChar: cursor + content.length,
-        });
-        cursor += content.length + 1;
-        current = [];
-        currentWords = 0;
-      }
+    return clean.length > 0 ? this.uniqueNumbers(clean) : fallback;
+  }
 
-      current.push(sentence);
-      currentWords += wordCount;
-    }
+  private uniqueNumbers(values: number[]): number[] {
+    return [...new Set(values)].sort((left, right) => left - right);
+  }
 
-    if (current.length > 0) {
-      const content = current.join(' ');
-      chunks.push({
-        ...metadata,
-        content,
-        chunkIndex: chunks.length,
-        tokenCount: currentWords,
-        startChar: cursor,
-        endChar: cursor + content.length,
-      });
-    }
+  private buildFallbackMapSummary(
+    groupIndex: number,
+    chunks: SourceChunk[],
+  ): MapSummary {
+    return {
+      groupIndex,
+      sourceChunkIndexes: chunks.map((chunk) => chunk.chunkIndex),
+      keyIdeas: chunks.map((chunk) => this.buildChunkDigest(chunk.content)),
+      importantFormulas: [],
+      solutionSteps: [],
+      missingInformation: [],
+    };
+  }
 
-    if (chunks.length > 0) {
-      return chunks;
-    }
-
-    const words = this.normalizeWhitespace(rawText)
-      .split(/\s+/)
-      .filter(Boolean);
-    for (let index = 0; index < words.length; index += this.chunkWordLimit) {
-      const content = words.slice(index, index + this.chunkWordLimit).join(' ');
-      chunks.push({
-        ...metadata,
-        content,
-        chunkIndex: chunks.length,
-        tokenCount: this.countWords(content),
-        startChar: null,
-        endChar: null,
-      });
-    }
-
-    return chunks;
+  private buildFallbackCollapsedSummary(
+    summaries: MapSummary[],
+  ): CollapsedSummary {
+    return {
+      groupIndexes: summaries.map((summary) => summary.groupIndex),
+      sourceChunkIndexes: this.uniqueNumbers(
+        summaries.flatMap((summary) => summary.sourceChunkIndexes),
+      ),
+      keyIdeas: summaries.flatMap((summary) => summary.keyIdeas).slice(0, 10),
+      importantFormulas: summaries
+        .flatMap((summary) => summary.importantFormulas)
+        .slice(0, 10),
+      solutionSteps: summaries
+        .flatMap((summary) => summary.solutionSteps)
+        .slice(0, 12),
+      missingInformation: summaries
+        .flatMap((summary) => summary.missingInformation)
+        .slice(0, 8),
+    };
   }
 
   private buildChunkDigest(text: string): string {
-    const sentences = this.splitSentences(text);
+    const sentences = this.text.splitSentences(text);
     const selected = sentences
-      .filter((sentence) => this.countWords(sentence) >= 5)
+      .filter((sentence) => this.text.countWords(sentence) >= 5)
       .slice(0, 2);
     const digest = selected.length > 0 ? selected.join(' ') : text;
 
-    return this.truncateWords(digest, 48);
+    return this.text.truncateWords(digest, 48);
   }
 
   private buildSectionSummaries(digests: string[]): string[] {
@@ -496,7 +909,9 @@ ${evidence}`;
 
     for (let index = 0; index < digests.length; index += this.sectionSize) {
       const section = digests.slice(index, index + this.sectionSize);
-      summaries.push(this.truncateWords(section.join(' '), this.sentenceLimit));
+      summaries.push(
+        this.text.truncateWords(section.join(' '), this.sentenceLimit),
+      );
     }
 
     return summaries;
@@ -506,11 +921,11 @@ ${evidence}`;
     const unique = new Map<string, string>();
 
     for (const candidate of candidates) {
-      const sentences = this.splitSentences(candidate);
+      const sentences = this.text.splitSentences(candidate);
 
       for (const sentence of sentences) {
-        const clean = this.truncateWords(sentence, 36);
-        const key = this.normalizeForCompare(clean);
+        const clean = this.text.truncateWords(sentence, 36);
+        const key = this.text.normalizeForCompare(clean);
 
         if (key.length >= 20 && !unique.has(key)) {
           unique.set(key, clean);
@@ -532,12 +947,13 @@ ${evidence}`;
     const source = sectionSummaries.length > 0 ? sectionSummaries : keyPoints;
     const text = source.slice(0, 3).join(' ');
 
-    return this.truncateWords(text, 220);
+    return this.text.truncateWords(text, 220);
   }
 
   private extractMainTopics(text: string): string[] {
     const mathPhrases = this.extractMathPhrases(text);
-    const words = this.normalizeForCompare(text)
+    const words = this.text
+      .normalizeForCompare(text)
       .split(/\s+/)
       .filter((word) => word.length >= 3 && !this.stopWords.has(word));
 
@@ -558,7 +974,7 @@ ${evidence}`;
   }
 
   private extractMathPhrases(text: string): string[] {
-    const normalized = this.normalizeForCompare(text);
+    const normalized = this.text.normalizeForCompare(text);
     const topics = [
       ['linear equation', /\b(linear equation|phuong trinh bac nhat)\b/],
       ['quadratic equation', /\b(quadratic equation|phuong trinh bac hai)\b/],
@@ -575,44 +991,6 @@ ${evidence}`;
     return topics
       .filter(([, pattern]) => pattern.test(normalized))
       .map(([topic]) => topic);
-  }
-
-  private splitSentences(text: string): string[] {
-    const normalized = this.normalizeWhitespace(text);
-    const sentencePattern = /[^.!?]+(?:[.!?]+|$)/g;
-    const matches: string[] = normalized.match(sentencePattern) ?? [];
-
-    return matches
-      .map((sentence) => sentence.trim())
-      .filter((sentence) => sentence.length > 0);
-  }
-
-  private truncateWords(text: string, maxWords: number): string {
-    const words = this.normalizeWhitespace(text).split(/\s+/).filter(Boolean);
-
-    if (words.length <= maxWords) {
-      return words.join(' ');
-    }
-
-    return words.slice(0, maxWords).join(' ') + '...';
-  }
-
-  private normalizeWhitespace(text: string): string {
-    return text.replace(/\s+/g, ' ').trim();
-  }
-
-  private normalizeForCompare(text: string): string {
-    return this.normalizeWhitespace(text)
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-z0-9\s]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-  }
-
-  private countWords(text: string): number {
-    return this.normalizeWhitespace(text).split(/\s+/).filter(Boolean).length;
   }
 
   private readonly stopWords = new Set([

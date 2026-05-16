@@ -59,3 +59,7 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 # Local model/runtime cache
 /models/
 /temp_audio/
+
+# DeepEval
+.deepeval/
+scripts/deepeval-*-report.json

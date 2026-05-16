@@ -1,0 +1,51 @@
+{
+  "generatedAt": "2026-05-15T06:16:36.599286+00:00",
+  "apiBaseUrl": "http://localhost:3000",
+  "evalSetPath": "C:\\Users\\leduc\\OneDrive\\Desktop\\video-sum\\scripts\\chat-eval.sample.json",
+  "mode": "rag",
+  "sessionId": "f53bedf3-f2d9-4dc0-81ec-0afb69a23e31",
+  "videoId": "97eb8235-edbc-4224-a210-702b6dc95b58",
+  "model": "groq:llama-3.3-70b-versatile",
+  "threshold": 0.7,
+  "metrics": [
+    "answer_relevancy"
+  ],
+  "averageScore": 0.4166,
+  "ragResults": [
+    {
+      "id": "main-concept",
+      "question": "Video nay giai thich khai niem chinh nao?",
+      "expectedOutput": "Replace this with the ideal grounded answer from the video.",
+      "answer": "Xin lỗi, nhưng tôi không thể hiểu rõ câu hỏi của bạn. Câu hỏi của bạn có vẻ như là tiếng Việt, nhưng tôi không thể hiểu được nội dung cụ thể của nó.\n\nNếu bạn có thể giải thích câu hỏi của mình một cách rõ ràng hơn, tôi sẽ cố gắng giúp bạn.",
+      "retrievalContextCount": 4,
+      "averageScore": 0.3333,
+      "metrics": [
+        {
+          "name": "AnswerRelevancyMetric",
+          "score": 0.3333333333333333,
+          "threshold": 0.7,
+          "success": false,
+          "reason": "The score is 0.33 because the output failed to address the input question about the main concept explained in the video, instead expressing confusion and only acknowledging the language, resulting in a low relevancy score."
+        }
+      ]
+    },
+    {
+      "id": "out-of-scope",
+      "question": "Video co noi ve chu de hoan toan khac nay khong?",
+      "expectedOutput": "The answer should say the requested topic is not found in the video evidence.",
+      "answer": "Tôi không thể tìm thấy thông tin về một video cụ thể liên quan đến chủ đề \"học toán khác nhau\". Nếu bạn có thể cung cấp thêm thông tin hoặc chi tiết về video đó, tôi có thể giúp bạn tìm kiếm thông tin liên quan.",
+      "retrievalContextCount": 4,
+      "averageScore": 0.5,
+      "metrics": [
+        {
+          "name": "AnswerRelevancyMetric",
+          "score": 0.5,
+          "threshold": 0.7,
+          "success": false,
+          "reason": "The score is 0.50 because the output partially addresses the input question, but is brought down by the inclusion of an irrelevant statement about the inability to find information, which does not contribute to the discussion about the video."
+        }
+      ]
+    }
+  ],
+  "summaryResult": null
+}

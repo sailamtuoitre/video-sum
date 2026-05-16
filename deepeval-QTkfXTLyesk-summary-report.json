@@ -1,0 +1,38 @@
+{
+  "generatedAt": "2026-05-15T09:19:02.226818+00:00",
+  "apiBaseUrl": "http://localhost:3000",
+  "evalSetPath": "C:\\Users\\leduc\\OneDrive\\Desktop\\video-sum\\scripts\\eval-QTkfXTLyesk.json",
+  "mode": "summarize",
+  "sessionId": null,
+  "videoId": "7070a8cf-01f2-40a1-8e5b-10677606f943",
+  "model": "groq:llama-3.3-70b-versatile",
+  "threshold": 0.7,
+  "metrics": [
+    "answer_relevancy",
+    "faithfulness",
+    "contextual_relevancy"
+  ],
+  "averageScore": 0.2857,
+  "ragResults": [],
+  "summaryResult": {
+    "id": "summary",
+    "videoId": "7070a8cf-01f2-40a1-8e5b-10677606f943",
+    "summaryId": "85a218b5-28fd-4a4b-9e7f-3d1201645129",
+    "sourceChunkCount": 105,
+    "actualOutput": "Simplified text:\nPhương trình mặt cầu có dạng tổng quát là (x - a)^2 + (y - b)^2 + (z - c)^2 = r^2. Tâm của mặt cầu là (a, b, c) và bán kính là r. Điều kiện để một phương trình là phương trình mặt cầu là a^2 + b^2 + c^2 - r^2 > 0. Phương trình mặt cầu có thể được viết dưới dạng x^2 + y^2 + z^2 + 2ax + 2by + 2cz + d = 0. Tâm của mặt cầu là (-a, -b, -c) và bán kính là √(a^2 + b^2 + c^2 - d). Điều kiện để một phương trình là phương trình mặt cầu là a^2 + b^2 + c^2 - d > 0.\n\nKey points:\n- Phương trình mặt cầu có dạng tổng quát là (x - a)^2 + (y - b)^2 + (z - c)^2 = r^2\n- Tâm của mặt cầu là (a, b, c)\n- Bán kính của mặt cầu là r\n- Điều kiện để một phương trình là phương trình mặt cầu là a^2 + b^2 + c^2 - r^2 > 0\n- Phương trình mặt cầu có thể được viết dưới dạng (x - a)^2 + (y - b)^2 + (z - c)^2 = r^2\n- Tính chu vi của mặt cầu bằng 2 * π * r\n\nMain topics:\n- Phương trình mặt cầu\n- Tâm của mặt cầu\n- Bán kính của mặt cầu\n- Điều kiện để một phương trình là phương trình mặt cầu\n- Chu vi của mặt cầu\n- Diện tích của mặt cầu",
+    "averageScore": 0.2857,
+    "metrics": [
+      {
+        "name": "SummarizationMetric",
+        "score": 0.2857142857142857,
+        "threshold": 0.7,
+        "success": false,
+        "reason": "The score is 0.29 because the summary contains contradicting information, such as incorrect equation and center of the sphere, and also includes extra information not present in the original text, like conditions for a sphere equation and circumference, which indicates a poor summarization quality.",
+        "scoreBreakdown": {
+          "Alignment": 0.2857142857142857,
+          "Coverage": 1.0
+        }
+      }
+    ]
+  }
+}

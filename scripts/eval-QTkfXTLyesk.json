@@ -1,0 +1,26 @@
+{
+  "videoId": "7070a8cf-01f2-40a1-8e5b-10677606f943",
+  "summaryAssessmentQuestions": [
+    "Does the summary preserve the main learning objective of writing sphere equations in Oxyz geometry?",
+    "Does the summary include the key formulas for a sphere's center, radius, and general equation?",
+    "Does the summary avoid adding unsupported facts that are not grounded in the video transcript?"
+  ],
+  "truthsExtractionLimit": 20,
+  "questions": [
+    {
+      "id": "sphere-standard-form",
+      "question": "Phuong trinh mat cau dang chuan trong khong gian Oxyz la gi, va tam ban kinh duoc xac dinh nhu the nao?",
+      "expectedOutput": "Phuong trinh mat cau dang chuan co dang (x - a)^2 + (y - b)^2 + (z - c)^2 = R^2, trong do tam la I(a, b, c) va ban kinh la R."
+    },
+    {
+      "id": "sphere-general-form-condition",
+      "question": "Khi viet phuong trinh mat cau dang tong quat, dieu kien nao de phuong trinh thuc su la mot mat cau?",
+      "expectedOutput": "Voi dang x^2 + y^2 + z^2 + 2ax + 2by + 2cz + d = 0, tam la (-a, -b, -c), ban kinh la sqrt(a^2 + b^2 + c^2 - d), va dieu kien la a^2 + b^2 + c^2 - d > 0."
+    },
+    {
+      "id": "sphere-from-center-point",
+      "question": "Neu biet tam mat cau va mot diem nam tren mat cau thi lap phuong trinh mat cau theo cac buoc nao?",
+      "expectedOutput": "Tinh ban kinh bang khoang cach tu tam den diem nam tren mat cau, sau do thay toa do tam va R^2 vao dang (x - a)^2 + (y - b)^2 + (z - c)^2 = R^2."
+    }
+  ]
+}
