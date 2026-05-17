@@ -9,7 +9,7 @@ export class SummaryConfigService {
       directMaxChunks: this.getInt('SUMMARY_DIRECT_MAX_CHUNKS', 8, 1),
       mapGroupSize: this.getInt('SUMMARY_MAP_GROUP_SIZE', 4, 1),
       maxMapGroups: this.getInt('SUMMARY_MAX_MAP_GROUPS', 10, 1),
-      mapMaxTokens: this.getInt('SUMMARY_MAP_MAX_TOKENS', 700, 100),
+      mapMaxTokens: this.getInt('SUMMARY_MAP_MAX_TOKENS', 1100, 100),
       collapseMaxGroups: this.getInt('SUMMARY_COLLAPSE_MAX_GROUPS', 6, 2),
       collapseMaxTokens: this.getInt('SUMMARY_COLLAPSE_MAX_TOKENS', 900, 100),
       reduceMaxTokens: this.getInt('SUMMARY_REDUCE_MAX_TOKENS', 1400, 200),

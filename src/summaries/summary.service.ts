@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { ChatOpenAI } from '@langchain/openai';
+import { AIMessageChunk } from '@langchain/core/messages';
 import { Prisma } from '@prisma/client';
 import { ChunkService } from '../chunks/chunk.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -242,7 +243,8 @@ export class SummaryService {
     const llm = this.createLlm(config, groqApiKey, config.reduceMaxTokens);
     const response = await this.invokeLlmWithRetry(
       () =>
-        llm.invoke(
+        this.invokeJsonLlm(
+          llm,
           this.promptBuilder.buildDirectSummaryPrompt(
             chunks,
             config.chunkWordLimit,
@@ -303,7 +305,8 @@ export class SummaryService {
       try {
         const response = await this.invokeLlmWithRetry(
           () =>
-            llm.invoke(
+            this.invokeJsonLlm(
+              llm,
               this.promptBuilder.buildMapSummaryPrompt(
                 index,
                 group,
@@ -344,7 +347,8 @@ export class SummaryService {
       try {
         const response = await this.invokeLlmWithRetry(
           () =>
-            llm.invoke(
+            this.invokeJsonLlm(
+              llm,
               this.promptBuilder.buildCollapseSummaryPrompt(index, group),
             ),
           config,
@@ -371,7 +375,11 @@ export class SummaryService {
   ): Promise<SummaryJson> {
     const llm = this.createLlm(config, groqApiKey, config.reduceMaxTokens);
     const response = await this.invokeLlmWithRetry(
-      () => llm.invoke(this.promptBuilder.buildReduceSummaryPrompt(summaries)),
+      () =>
+        this.invokeJsonLlm(
+          llm,
+          this.promptBuilder.buildReduceSummaryPrompt(summaries),
+        ),
       config,
     );
 
@@ -391,6 +399,17 @@ export class SummaryService {
       },
       temperature: 0.1,
       maxTokens,
+    });
+  }
+
+  private invokeJsonLlm(
+    llm: ReturnType<typeof this.createLlm>,
+    prompt: string,
+  ): Promise<AIMessageChunk> {
+    return llm.invoke(prompt, {
+      response_format: {
+        type: 'json_object',
+      },
     });
   }
 
@@ -664,7 +683,15 @@ export class SummaryService {
       try {
         return JSON.parse(candidate) as unknown;
       } catch {
-        continue;
+        const repaired = this.repairJsonCandidate(candidate);
+
+        if (repaired !== candidate) {
+          try {
+            return JSON.parse(repaired) as unknown;
+          } catch {
+            continue;
+          }
+        }
       }
     }
 
@@ -685,7 +712,80 @@ export class SummaryService {
     const balanced = this.extractBalancedJsonObjects(text);
     candidates.push(...balanced);
 
+    const firstBrace = text.indexOf('{');
+    const lastBrace = text.lastIndexOf('}');
+
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      candidates.push(text.slice(firstBrace, lastBrace + 1).trim());
+    }
+
     return [...new Set(candidates.filter((candidate) => candidate.length > 0))];
+  }
+
+  private repairJsonCandidate(candidate: string): string {
+    return this.escapeControlCharactersInStrings(
+      this.normalizeJsonQuotes(candidate)
+        .replace(/^\uFEFF/, '')
+        .replace(/,\s*([}\]])/g, '$1')
+        .trim(),
+    );
+  }
+
+  private normalizeJsonQuotes(candidate: string): string {
+    return candidate
+      .replace(/[\u201C\u201D]/g, '"')
+      .replace(/[\u2018\u2019]/g, "'");
+  }
+
+  private escapeControlCharactersInStrings(candidate: string): string {
+    let output = '';
+    let inString = false;
+    let escaped = false;
+
+    for (let index = 0; index < candidate.length; index += 1) {
+      const char = candidate[index];
+
+      if (inString) {
+        if (escaped) {
+          output += char;
+          escaped = false;
+          continue;
+        }
+
+        if (char === '\\') {
+          output += char;
+          escaped = true;
+          continue;
+        }
+
+        if (char === '"') {
+          output += char;
+          inString = false;
+          continue;
+        }
+
+        if (char === '\n') {
+          output += '\\n';
+          continue;
+        }
+
+        if (char === '\r') {
+          output += '\\r';
+          continue;
+        }
+
+        if (char === '\t') {
+          output += '\\t';
+          continue;
+        }
+      } else if (char === '"') {
+        inString = true;
+      }
+
+      output += char;
+    }
+
+    return output;
   }
 
   private extractBalancedJsonObjects(text: string): string[] {

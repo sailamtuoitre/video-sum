@@ -1,0 +1,81 @@
+{
+  "generatedAt": "2026-05-16T07:16:32.173322+00:00",
+  "apiBaseUrl": "http://localhost:3000",
+  "evalSetPath": "C:\\Users\\leduc\\OneDrive\\Desktop\\video-sum\\scripts\\chat-eval.sample.json",
+  "mode": "rag",
+  "sessionId": "e7bf8e15-f1c5-4e23-b2a0-5d75f9560527",
+  "videoId": "6a2bb063-4df7-4262-a730-1410455bae24",
+  "model": "groq:llama-3.3-70b-versatile",
+  "threshold": 0.7,
+  "metrics": [
+    "answer_relevancy",
+    "faithfulness",
+    "contextual_relevancy"
+  ],
+  "averageScore": 0.375,
+  "ragResults": [
+    {
+      "id": "main-concept",
+      "question": "Video nay giai thich khai niem chinh nao?",
+      "expectedOutput": "Replace this with the ideal grounded answer from the video.",
+      "answer": "RAG could not generate an answer right now. Please check GROQ_API_KEY and rebuild the transcript index. Detail: No transcript index is available. Ingest a video transcript first.",
+      "retrievalContextCount": 0,
+      "averageScore": 0.4167,
+      "metrics": [
+        {
+          "name": "AnswerRelevancyMetric",
+          "score": 0.25,
+          "threshold": 0.7,
+          "success": false,
+          "reason": "The score is 0.25 because the actual output contains several irrelevant statements, including setup instructions and absence of a transcript index, which do not directly address the concept explained in the video, but it still attempts to provide some information, preventing the score from being lower."
+        },
+        {
+          "name": "FaithfulnessMetric",
+          "score": 1.0,
+          "threshold": 0.7,
+          "success": true,
+          "reason": "The score is 1.00 because there are no contradictions, indicating a perfect alignment between the actual output and the retrieval context."
+        },
+        {
+          "name": "ContextualRelevancyMetric",
+          "score": 0,
+          "threshold": 0.7,
+          "success": false,
+          "reason": "The score is 0.00 because there are no relevant statements or reasons provided to support the input, as evidenced by the empty lists: 'Reasons for why the retrieval context is irrelevant to the input: []' and 'Statement in the retrieval context that is relevant to the input: []'."
+        }
+      ]
+    },
+    {
+      "id": "out-of-scope",
+      "question": "Video co noi ve chu de hoan toan khac nay khong?",
+      "expectedOutput": "The answer should say the requested topic is not found in the video evidence.",
+      "answer": "RAG could not generate an answer right now. Please check GROQ_API_KEY and rebuild the transcript index. Detail: No transcript index is available. Ingest a video transcript first.",
+      "retrievalContextCount": 0,
+      "averageScore": 0.3333,
+      "metrics": [
+        {
+          "name": "AnswerRelevancyMetric",
+          "score": 0.0,
+          "threshold": 0.7,
+          "success": false,
+          "reason": "The score is 0.00 because the actual output contained multiple irrelevant statements unrelated to the input topic, including discussions about AI capabilities, API keys, transcript indices, and video transcripts, which failed to address the input question."
+        },
+        {
+          "name": "FaithfulnessMetric",
+          "score": 1.0,
+          "threshold": 0.7,
+          "success": true,
+          "reason": "The score is 1.00 because there are no contradictions, indicating a perfect alignment between the actual output and the retrieval context."
+        },
+        {
+          "name": "ContextualRelevancyMetric",
+          "score": 0,
+          "threshold": 0.7,
+          "success": false,
+          "reason": "The score is 0.00 because there are no relevant statements or reasons provided to support any connection between the input and the retrieval context, as evidenced by the empty lists: 'Reasons for why the retrieval context is irrelevant to the input: []' and 'Statement in the retrieval context that is relevant to the input: []'."
+        }
+      ]
+    }
+  ],
+  "summaryResult": null
+}

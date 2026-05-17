@@ -13,6 +13,7 @@ from pathlib import Path
 DEFAULT_API_BASE_URL = "http://localhost:3000"
 DEFAULT_EVAL_SET = "scripts/chat-eval.sample.json"
 DEFAULT_MODEL = "gpt-4.1"
+PLACEHOLDER_VIDEO_IDS = {"replace-with-video-id", "<video-id>", "video-id"}
 
 
 def load_env_file(path=".env"):
@@ -430,6 +431,19 @@ def load_eval_set(path):
     return resolved, data
 
 
+def is_placeholder_video_id(video_id):
+    return isinstance(video_id, str) and video_id.strip().lower() in PLACEHOLDER_VIDEO_IDS
+
+
+def require_real_video_id(video_id, eval_set_path):
+    if is_placeholder_video_id(video_id):
+        raise RuntimeError(
+            "The eval set still contains the placeholder videoId "
+            f"{video_id!r}. Replace it in {eval_set_path} or pass a real UUID, for example: "
+            "npm run eval:deepeval -- --video-id <real-video-uuid>"
+        )
+
+
 def print_summary(report):
     print(f"Evaluation set: {report['evalSetPath']}")
     print(f"API: {report['apiBaseUrl']}")
@@ -471,6 +485,8 @@ def main():
     classes = load_deepeval()
     eval_set_path, eval_set = load_eval_set(args.eval_set)
     video_id = args.video_id or eval_set.get("videoId")
+    if video_id and args.mode in {"rag", "summarize", "all"}:
+        require_real_video_id(video_id, eval_set_path)
 
     if not args.session_id and not video_id and args.mode in {"rag", "all"}:
         raise RuntimeError("Provide --session-id, --video-id, SESSION_ID, VIDEO_ID, or videoId in the eval set.")

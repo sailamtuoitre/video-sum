@@ -1,0 +1,85 @@
+{
+  "generatedAt": "2026-05-16T07:57:53.072837+00:00",
+  "apiBaseUrl": "http://localhost:3008",
+  "evalSetPath": "C:\\Users\\leduc\\OneDrive\\Desktop\\video-sum\\scripts\\eval-QTkfXTLyesk.json",
+  "mode": "rag",
+  "sessionId": "9b1e1fb4-7677-4113-8822-8bf0dfc3fa4e",
+  "videoId": "7070a8cf-01f2-40a1-8e5b-10677606f943",
+  "model": "groq:llama-3.3-70b-versatile",
+  "threshold": 0.7,
+  "metrics": [
+    "answer_relevancy"
+  ],
+  "averageScore": 0.75,
+  "ragResults": [
+    {
+      "id": "sphere-standard-form",
+      "question": "Phuong trinh mat cau dang chuan trong khong gian Oxyz la gi, va tam ban kinh duoc xac dinh nhu the nao?",
+      "expectedOutput": "Phuong trinh mat cau dang chuan co dang (x - a)^2 + (y - b)^2 + (z - c)^2 = R^2, trong do tam la I(a, b, c) va ban kinh la R.",
+      "answer": "Phương trình mặt cầu dạng tổng quát trong không gian Oxyz là:\n\n(x - a)^2 + (y - b)^2 + (z - c)^2 = R^2\n\nvới (a, b, c) là tọa độ tâm I của mặt cầu và R là bán kính của mặt cầu.\n\nĐể xác định tọa độ tâm I và bán kính R, ta cần có phương trình mặt cầu dạng tổng quát. Trong trường hợp này, ta có phương trình mặt cầu là:\n\nx bình cộng y bình cộng z bình + 2x -. 4y + 6 Z - 2 = 0\n\nTa có thể viết lại phương trình này dưới dạng:\n\n(x^2 + y^2 + z^2) + 2x - 4y + 6z - 2 = 0\n\nĐể chuyển đổi sang dạng tổng quát, ta cần tách bớt các hạng mục:\n\n(x^2 + 2x) + (y^2 - 4y) + (z^2 + 6z) = 2\n\nSau đó, ta hoàn thiện các biểu thức:\n\n(x^2 + 2x + 1) + (y^2 - 4y + 4) + (z^2 + 6z + 9) = 2 + 1 + 4 + 9\n\n(x + 1)^2 + (y - 2)^2 + (z + 3)^2 = 16\n\nVậy phương trình mặt cầu dạng tổng quát là:\n\n(x + 1)^2 + (y - 2)^2 + (z + 3)^2 = 16",
+      "retrievalContextCount": 4,
+      "averageScore": 1.0,
+      "metrics": [
+        {
+          "name": "AnswerRelevancyMetric",
+          "score": 1.0,
+          "threshold": 0.7,
+          "success": true,
+          "reason": "The score is 1.00 because the output perfectly addresses the input question without any irrelevant statements, demonstrating a clear and concise understanding of the topic."
+        }
+      ]
+    },
+    {
+      "id": "sphere-general-form-condition",
+      "question": "Khi viet phuong trinh mat cau dang tong quat, dieu kien nao de phuong trinh thuc su la mot mat cau?",
+      "expectedOutput": "Voi dang x^2 + y^2 + z^2 + 2ax + 2by + 2cz + d = 0, tam la (-a, -b, -c), ban kinh la sqrt(a^2 + b^2 + c^2 - d), va dieu kien la a^2 + b^2 + c^2 - d > 0.",
+      "answer": "Để viết phương trình mặt cầu dạng tổng quát, điều kiện nào để phương trình thực sự là một mặt cầu?\n\nĐáp án: \n\n- Phương trình mặt cầu dạng tổng quát là x^2 + y^2 + z^2 + 2gx + 2fy + 2hz + d = 0\n- Để phương trình này thực sự là một mặt cầu, điều kiện là d < 0 (d âm)\n\nVậy, để viết phương trình mặt cầu dạng tổng quát, điều kiện là d < 0.",
+      "retrievalContextCount": 4,
+      "averageScore": 1.0,
+      "metrics": [
+        {
+          "name": "AnswerRelevancyMetric",
+          "score": 1.0,
+          "threshold": 0.7,
+          "success": true,
+          "reason": "The score is 1.00 because the output perfectly addresses the input question without any irrelevant statements, demonstrating a clear and concise understanding of the topic."
+        }
+      ]
+    },
+    {
+      "id": "sphere-from-center-point",
+      "question": "Neu biet tam mat cau va mot diem nam tren mat cau thi lap phuong trinh mat cau theo cac buoc nao?",
+      "expectedOutput": "Tinh ban kinh bang khoang cach tu tam den diem nam tren mat cau, sau do thay toa do tam va R^2 vao dang (x - a)^2 + (y - b)^2 + (z - c)^2 = R^2.",
+      "answer": "Để viết phương trình mặt cầu khi biết tâm và một điểm nằm trên mặt cầu, ta thực hiện các bước sau:\n\n1. Xác định tâm của mặt cầu (I) và bán kính của mặt cầu (r).\n2. Xác định tọa độ của điểm nằm trên mặt cầu (A).\n3. Sử dụng công thức phương trình mặt cầu: (x - x0)^2 + (y - y0)^2 + (z - z0)^2 = r^2, trong đó (x0, y0, z0) là tọa độ của tâm I và r là bán kính của mặt cầu.\n4. Thay thế tọa độ của điểm A vào công thức và giải phương trình để tìm ra phương trình mặt cầu.\n\nVậy, để viết phương trình mặt cầu khi biết tâm và một điểm nằm trên mặt cầu, ta cần thực hiện các bước trên.",
+      "retrievalContextCount": 4,
+      "averageScore": 1.0,
+      "metrics": [
+        {
+          "name": "AnswerRelevancyMetric",
+          "score": 1.0,
+          "threshold": 0.7,
+          "success": true,
+          "reason": "The score is 1.00 because the output perfectly addresses the input question without any irrelevant statements, demonstrating a clear and concise understanding of the topic."
+        }
+      ]
+    },
+    {
+      "id": "sphere-out-of-scope-integral",
+      "question": "Video nay co trinh bay cach tinh tich phan tung phan khong?",
+      "expectedOutput": "Khong co du bang chung trong transcript de tra loi cau hoi nay.",
+      "answer": "Khong co du bang chung trong transcript de tra loi cau hoi nay.",
+      "retrievalContextCount": 0,
+      "averageScore": 0.0,
+      "metrics": [
+        {
+          "name": "AnswerRelevancyMetric",
+          "score": 0.0,
+          "threshold": 0.7,
+          "success": false,
+          "reason": "The score is 0.00 because the actual output explicitly states that there is no relevant information to answer the question, making it completely irrelevant to the input."
+        }
+      ]
+    }
+  ],
+  "summaryResult": null
+}

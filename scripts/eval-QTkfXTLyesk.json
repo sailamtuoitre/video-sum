@@ -3,7 +3,10 @@
   "summaryAssessmentQuestions": [
     "Does the summary preserve the main learning objective of writing sphere equations in Oxyz geometry?",
     "Does the summary include the key formulas for a sphere's center, radius, and general equation?",
-    "Does the summary avoid adding unsupported facts that are not grounded in the video transcript?"
+    "Does the summary explain the condition for the general equation to represent a sphere?",
+    "Does the summary preserve the steps for forming a sphere equation from a center and a point on the sphere?",
+    "Does the summary avoid adding unsupported facts that are not grounded in the video transcript?",
+    "Is the summary structured clearly enough for a student to review the lesson?"
   ],
   "truthsExtractionLimit": 20,
   "questions": [
@@ -21,6 +24,11 @@
       "id": "sphere-from-center-point",
       "question": "Neu biet tam mat cau va mot diem nam tren mat cau thi lap phuong trinh mat cau theo cac buoc nao?",
       "expectedOutput": "Tinh ban kinh bang khoang cach tu tam den diem nam tren mat cau, sau do thay toa do tam va R^2 vao dang (x - a)^2 + (y - b)^2 + (z - c)^2 = R^2."
+    },
+    {
+      "id": "sphere-out-of-scope-integral",
+      "question": "Video nay co trinh bay cach tinh tich phan tung phan khong?",
+      "expectedOutput": "Khong co du bang chung trong transcript de tra loi cau hoi nay."
     }
   ]
 }
