@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Noto+Serif:ital,wght@0,500;0,600;0,700;1,500&display=swap');
-
 @import "tailwindcss";
 
 @theme {
@@ -18,8 +16,8 @@
   --color-void: #0f0f12;
   --color-void-deep: #0a0a0c;
 
-  --font-display: 'Noto Serif', 'Times New Roman', serif;
-  --font-body: 'Be Vietnam Pro', 'Segoe UI', system-ui, sans-serif;
+  --font-display: 'Times New Roman', Georgia, serif;
+  --font-body: Tahoma, 'Segoe UI', Arial, sans-serif;
 }
 
 * {
@@ -31,6 +29,7 @@ body {
   background: var(--color-void);
   color: var(--color-ink);
   font-family: var(--font-body);
+  line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }

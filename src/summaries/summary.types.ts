@@ -41,7 +41,7 @@ export type CollapsedSummary = {
   missingInformation: string[];
 };
 
-export type SummaryMode = 'auto' | 'direct' | 'mapreduce' | 'fallback';
+export type SummaryMode = 'auto' | 'direct' | 'mapreduce';
 
 export type SummaryConfig = {
   mode: SummaryMode;
@@ -55,6 +55,8 @@ export type SummaryConfig = {
   chunkWordLimit: number;
   retryAttempts: number;
   retryBaseDelayMs: number;
+  mapModel: string;
+  reduceModel: string;
   model: string;
   baseUrl: string;
 };

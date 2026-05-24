@@ -9,21 +9,36 @@ export class SummaryPromptBuilder {
   buildDirectSummaryPrompt(chunks: SourceChunk[], chunkWordLimit: number) {
     return `${this.systemRules()}
 
-Nhiem vu DIRECT:
-- Tom tat truc tiep toan bo SOURCE_CHUNKS thanh ghi chu hoc toan de on tap.
-- Giu cong thuc, dieu kien ap dung, dang bai, vi du, buoc giai va ket luan quan trong.
-- Uu tien noi dung co can cu tu chunk, gan dau nguon nhu [chunk 3] trong tung y neu co the.
-- Neu transcript thieu du kien, noi ro du kien nao con thieu.
-- Moi keyPoint phai co dau nguon [chunk n] neu y do co can cu trong SOURCE_CHUNKS.
-- simplifiedText chi ghi nhan muc khi co noi dung; khong viet nhan muc rong hoac nhan muc chi co "...".
+Nhiệm vụ:
+- Tóm tắt nội dung bài giảng thành văn bản tiếng Việt học thuật, tự nhiên và dễ học lại.
+- Loại bỏ filler words, câu nói lặp, câu đệm và chi tiết không cần thiết.
+- Chỉ giữ ý chính có căn cứ rõ ràng trong SOURCE_CHUNKS.
+- Nếu transcript bị lỗi nhận dạng, được phép chuẩn hóa chính tả và câu văn, nhưng không được thêm ý mới.
+- Nếu một ý xuất hiện nhiều lần, chỉ giữ một lần và viết gọn nhất có thể.
+- Không copy nguyên văn transcript.
+- Nếu không có đủ thông tin cho một mục, viết ngắn gọn rằng "không đủ dữ kiện" thay vì đoán nghĩa.
 
-Chi tra ve mot JSON object hop le, khong markdown, khong text ngoai JSON:
+Yêu cầu định dạng bắt buộc:
+1. Chủ đề chính
+2. Giải thích
+3. Ví dụ minh họa
+4. Kết luận
+
+Quy tắc chất lượng:
+- Viết bằng văn học thuật, trang trọng, rõ nghĩa.
+- Mỗi mục bắt đầu bằng một câu tổng quát, sau đó mới nêu nội dung cụ thể.
+- Không lặp lại cùng một ý bằng nhiều cách khác nhau.
+- Mỗi keyPoint phải là một ý độc lập, ngắn gọn, có giá trị học tập.
+- simplifiedText phải đi thẳng vào nội dung, không có câu dẫn dông dài.
+- mainTopics chỉ gồm 3 đến 8 chủ đề hoặc khía cạnh quan trọng nhất.
+
+Chỉ trả về một JSON object hợp lệ, không markdown, không text ngoài JSON:
 {
   "keyPoints": [
-    "3 den 6 y chinh, moi y neu ro kien thuc/dang bai/cong thuc/buoc giai va kem [chunk n] neu co can cu"
+    "3 đến 5 ý chính ngắn gọn, khác nhau, bám sát transcript"
   ],
-  "simplifiedText": "Chu de bai hoc: ...\\nKien thuc trong tam: ...\\nCong thuc/dinh nghia: ...\\nDang bai va cach nhan dien: ...\\nCac buoc giai: ...\\nVi du trong transcript: ...\\nLuu y/dieu kien: ...\\nKet luan: ...\\nPhan chua du du kien: ...",
-  "mainTopics": ["3 den 10 chu de, dang bai, cong thuc hoac ky nang"]
+  "simplifiedText": "1. Chủ đề chính: ...\\n2. Giải thích: ...\\n3. Ví dụ minh họa: ...\\n4. Kết luận: ...",
+  "mainTopics": ["3 đến 8 chủ đề, khía cạnh hoặc khung kiến thức quan trọng"]
 }
 
 SOURCE_CHUNKS:
@@ -37,14 +52,16 @@ ${this.formatChunks(chunks, chunkWordLimit)}`;
   ) {
     return `${this.systemRules()}
 
-Nhiem vu MAP:
-- Chi phan tich nhom chunk ben duoi, khong tao final summary.
-- Trich y chinh theo goc nhin hoc toan: khai niem, cong thuc, dieu kien, dang bai, buoc giai, loi can tranh.
-- Moi y nen giu dau nguon nhu [chunk 3] neu co the.
-- Khong them kien thuc ngoai SOURCE_CHUNKS.
-- Neu nhom chunk khong du de ket luan cong thuc/dieu kien, dua vao missingInformation thay vi suy doan.
+Nhiệm vụ MAP:
+- Chỉ phân tích nhóm chunk bên dưới, chưa viết final summary.
+- Rút ra ý chính, khía cạnh, định nghĩa, công thức, điều kiện, cách làm, ví dụ và lỗi nhận dạng nếu có.
+- Ưu tiên ý có căn cứ rõ ràng; có thể gắn nhãn [chunk n] nếu thật sự cần truy vết.
+- Không thêm kiến thức bên ngoài SOURCE_CHUNKS.
+- Không lặp lại cùng một ý ở nhiều mảng khác nhau.
+- Nếu thông tin không đủ để kết luận, đưa vào missingInformation thay vì suy đoán.
+- Văn phong cần gọn, rõ, ít trùng lặp.
 
-Chi tra ve mot JSON object hop le, khong markdown, khong text ngoai JSON:
+Chỉ trả về một JSON object hợp lệ, không markdown, không text ngoài JSON:
 {
   "groupIndex": ${groupIndex},
   "sourceChunkIndexes": [${chunks.map((chunk) => chunk.chunkIndex).join(', ')}],
@@ -64,14 +81,14 @@ ${this.formatChunks(chunks, chunkWordLimit)}`;
   ) {
     return `${this.systemRules()}
 
-Nhiem vu COLLAPSE:
-- Nen cac map summaries thanh mot summary trung gian ngan hon, khong tao final summary.
-- Loai y trung lap nhung khong bo cong thuc, dieu kien, dang bai hoac buoc giai quan trong.
-- Gop cac y theo nhom: keyIdeas, importantFormulas, solutionSteps, missingInformation.
-- Giu lai groupIndexes va sourceChunkIndexes de truy vet nguon.
-- Khong them y moi khong co trong MAP_SUMMARIES.
+Nhiệm vụ COLLAPSE:
+- Rút gọn các map summaries thành summary trung gian ngắn hơn.
+- Gộp ý trùng lặp, nhưng không được làm mất công thức, điều kiện, cách làm, ví dụ hoặc ý then chốt.
+- Giữ liên kết nguồn qua groupIndexes và sourceChunkIndexes.
+- Không thêm ý mới ngoài MAP_SUMMARIES.
+- Ưu tiên nội dung có giá trị tổng hợp và có thể dùng để viết bản tóm tắt cuối.
 
-Chi tra ve mot JSON object hop le, khong markdown, khong text ngoai JSON:
+Chỉ trả về một JSON object hợp lệ, không markdown, không text ngoài JSON:
 {
   "groupIndexes": [],
   "sourceChunkIndexes": [],
@@ -89,32 +106,28 @@ ${this.formatIntermediateSummaries(summaries)}`;
   buildReduceSummaryPrompt(summaries: Array<MapSummary | CollapsedSummary>) {
     return `${this.systemRules()}
 
-Nhiem vu REDUCE:
-- Gop cac summary trung gian thanh final summary dung de hoc va on tap mon toan.
-- Chi dung thong tin trong INTERMEDIATE_SUMMARIES.
-- Loai trung lap, giu mach bai hoc, uu tien cong thuc, dang bai, dieu kien, buoc giai va ly do cua tung buoc.
-- Neu thong tin khong du de ket luan, ghi ro khong du du kien.
-- Moi keyPoint phai co [chunk n] neu nguon trung gian co sourceChunkIndexes lien quan.
-- Khong viet nhan muc rong trong simplifiedText; thong tin thieu phai gom vao "Phan chua du du kien".
+Nhiệm vụ REDUCE:
+- Tổng hợp INTERMEDIATE_SUMMARIES thành bản tóm tắt cuối cùng có thể học lại nhanh.
+- Chỉ dùng thông tin có sẵn trong INTERMEDIATE_SUMMARIES.
+- Gộp ý trùng lặp, ưu tiên ý quan trọng nhất và bỏ chi tiết lan man.
+- Giữ lại công thức, điều kiện áp dụng, ví dụ và các bước giải nếu chúng xuất hiện trong nguồn trung gian.
+- Tạo văn bản có văn phong học thuật, trong sáng, không lặp câu, không nối từ dư thừa.
+- Cuối cùng phải ra đúng cấu trúc:
+  1. Chủ đề chính
+  2. Giải thích
+  3. Ví dụ minh họa
+  4. Kết luận
+- Nếu một mục không đủ thông tin, viết ngắn gọn rằng "không đủ dữ kiện".
+- Mỗi keyPoint phải ngắn, rõ và không trùng nhau.
+- mainTopics phải gồm 3 đến 8 ý hoặc chủ đề có giá trị tổng hợp.
 
-Bat buoc viet simplifiedText theo dung cac nhan muc sau neu co thong tin:
-Chu de bai hoc:
-Kien thuc trong tam:
-Cong thuc/dinh nghia:
-Dang bai va cach nhan dien:
-Cac buoc giai:
-Vi du trong transcript:
-Luu y/dieu kien:
-Ket luan:
-Phan chua du du kien:
-
-Chi tra ve mot JSON object hop le, khong markdown, khong text ngoai JSON:
+Chỉ trả về một JSON object hợp lệ, không markdown, không text ngoài JSON:
 {
   "keyPoints": [
-    "3 den 6 y chinh, moi y neu ro kien thuc/dang bai/cong thuc/buoc giai va kem [chunk n] neu co can cu"
+    "3 đến 5 ý chính ngắn gọn, khác nhau, bám sát nội dung tổng hợp"
   ],
-  "simplifiedText": "Chu de bai hoc: ...\\nKien thuc trong tam: ...\\nCong thuc/dinh nghia: ...\\nDang bai va cach nhan dien: ...\\nCac buoc giai: ...\\nVi du trong transcript: ...\\nLuu y/dieu kien: ...\\nKet luan: ...\\nPhan chua du du kien: ...",
-  "mainTopics": ["3 den 10 chu de, dang bai, cong thuc hoac ky nang"]
+  "simplifiedText": "1. Chủ đề chính: ...\\n2. Giải thích: ...\\n3. Ví dụ minh họa: ...\\n4. Kết luận: ...",
+  "mainTopics": ["3 đến 8 chủ đề, khía cạnh hoặc khung kiến thức quan trọng"]
 }
 
 INTERMEDIATE_SUMMARIES:
@@ -122,18 +135,19 @@ ${this.formatIntermediateSummaries(summaries)}`;
   }
 
   private systemRules() {
-    return `Ban la he thong tom tat noi dung hoc toan co do chinh xac cao.
+    return `Bạn là hệ thống tóm tắt nội dung bài giảng có độ chính xác cao.
 
-Quy tac bat buoc:
-1. Khong suy doan ngoai du lieu duoc cung cap.
-2. Khong tu tao dinh ly, cong thuc, so lieu hoac dieu kien khong co trong nguon.
-3. Neu thieu du kien, phai noi ro du kien nao con thieu.
-4. Voi bai giai toan, giu cac buoc bien doi quan trong va ly do cua tung buoc.
-5. Neu khong du do tin cay, ghi: "Khong du do tin cay de khang dinh buoc nay."
-6. JSON phai parse duoc bang JSON.parse: dung double quotes, khong trailing comma, khong code fence.
-7. Khong boc markdown, khong them giai thich ngoai JSON.
-8. Moi y quan trong phai giu dau nguon [chunk n] khi co the truy vet.
-9. Neu khong co thong tin cho mot nhan muc, bo nhan muc do hoac ghi vao "Phan chua du du kien" thay vi dien noi dung rong.`;
+Quy tắc bắt buộc:
+1. Chỉ sử dụng thông tin có trong SOURCE_CHUNKS hoặc INTERMEDIATE_SUMMARIES.
+2. Không suy đoán, không thêm kiến thức ngoài nguồn.
+3. Không copy nguyên văn transcript; phải chuyển thành văn viết tự nhiên.
+4. Loại bỏ filler words, câu nói lặp và đoạn thừa.
+5. Ưu tiên câu ngắn, rõ, học thuật và dễ ôn lại.
+6. Nếu có nhiều ý giống nhau, gộp thành một ý duy nhất.
+7. Nếu một mục không đủ dữ liệu, viết rõ "không đủ dữ kiện" thay vì bỏ trống hoặc đoán nghĩa.
+8. JSON phải parse được bởi JSON.parse: dùng dấu nháy kép, không trailing comma, không code fence.
+9. Không markdown, không giải thích ngoài JSON.
+10. Hạn chế lặp từ và lặp câu; mỗi ý chỉ nên xuất hiện một lần nếu có thể.`;
   }
 
   private formatChunks(chunks: SourceChunk[], chunkWordLimit: number) {

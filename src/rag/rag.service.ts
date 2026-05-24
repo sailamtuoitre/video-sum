@@ -1,7 +1,8 @@
-import { Injectable } from '@nestjs/common';
+﻿import { Injectable } from '@nestjs/common';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { ChatOpenAI } from '@langchain/openai';
 import { IngestService } from './ingest.service';
+import { getTrimmedEnv } from '../config/env';
 
 export type RagContextChunk = {
   id?: string;
@@ -54,7 +55,7 @@ export class RagService {
     contextChunks?: RagContextChunk[],
   ): Promise<AnswerQuestionResult> {
     try {
-      const groqApiKey = process.env.GROQ_API_KEY;
+      const groqApiKey = getTrimmedEnv('GROQ_API_KEY');
 
       if (!groqApiKey) {
         throw new Error(
@@ -138,7 +139,7 @@ export class RagService {
     const context = this.formatContext(retrievedChunks);
 
     if (!context) {
-      return 'Khong co du bang chung trong transcript de tra loi cau hoi nay.';
+      return 'Không có đủ bằng chứng trong transcript để trả lời câu hỏi này.';
     }
 
     const response = await llm.invoke([
@@ -150,17 +151,17 @@ export class RagService {
   }
 
   private buildQaSystemPrompt(): string {
-    return `Ban la tro ly QA cho bai hoc toan.
+    return `Bạn là trợ lý QA cho bài học toán.
 
-Chi su dung CONTEXT duoc cung cap. Khong suy doan ngoai transcript.
-Tra loi thang vao cau hoi trong toi da 4 cau hoac 4 gach dau dong.
-Khong lap lai cau hoi. Khong viet loi mo dau.
-Neu cau hoi hoi cong thuc, dua cong thuc truoc.
-Khong tu them vi du, khong giai them bai khac neu nguoi dung khong yeu cau.
-Neu cau hoi hoi cac buoc, chi liet ke cac buoc can lam; khong them vi du so.
-Khong dua cong thuc khong xuat hien trong CONTEXT.
-Neu CONTEXT khong co du bang chung, tra loi dung cau sau: "Khong co du bang chung trong transcript de tra loi cau hoi nay."
-Uu tien tieng Viet. Khi co the, them dau nguon ngan nhu [chunk 3].`;
+Chỉ sử dụng CONTEXT được cung cấp. Không suy đoán ngoài transcript.
+Trả lời thẳng vào câu hỏi trong tối đa 4 câu hoặc 4 gạch đầu dòng.
+Không lặp lại câu hỏi. Không viết lời mở đầu.
+Nếu câu hỏi hỏi công thức, đưa công thức trước.
+Không tự thêm ví dụ, không giải thêm bài khác nếu người dùng không yêu cầu.
+Nếu câu hỏi hỏi các bước, chỉ liệt kê các bước cần làm; không thêm ví dụ số.
+Không đưa công thức không xuất hiện trong CONTEXT.
+Nếu CONTEXT không có đủ bằng chứng, trả lời đúng câu sau: "Không có đủ bằng chứng trong transcript để trả lời câu hỏi này."
+Ưu tiên tiếng Việt. Khi có thể, thêm dấu nguồn ngắn như [chunk 3].`;
   }
 
   private buildQaUserPrompt(context: string, question: string): string {
@@ -220,3 +221,4 @@ ANSWER:`;
     return typeof candidate.text === 'string';
   }
 }
+

@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -226,7 +226,7 @@ export class ChatSessionService {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       answer =
-        'RAG could not generate an answer right now. Please check GROQ_API_KEY and rebuild the transcript index. Detail: ' +
+        'RAG chưa thể tạo câu trả lời ngay lúc này. Vui lòng kiểm tra GROQ_API_KEY và xây dựng lại chỉ mục transcript. Chi tiết: ' +
         this.sanitizeProviderError(message);
     }
 
@@ -424,3 +424,4 @@ export class ChatSessionService {
     throw error;
   }
 }
+

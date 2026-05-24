@@ -113,7 +113,7 @@ Backend duoc chia theo module:
 
 - `video`: quan ly video, lay transcript, clean text va ingest transcript vao RAG.
 - `chunks`: chia transcript thanh chunk doc lap, luu chunk vao PostgreSQL.
-- `summaries`: tao summary AI-first tu chunk, co fallback extractive/hierarchical.
+- `summaries`: tao summary AI-first tu chunk, co fallback extractive/hierarchical, chon chunk theo tung doan de bao phu toan bo transcript.
 - `quizzes`: tao mini test tu summary va chunk, uu tien AI, co fallback rule-based.
 - `quiz-questions`: cham dap an tung cau hoi.
 - `chat-sessions`: tao phien chat, luu message, lay chunk lien quan va goi RAG.
@@ -191,6 +191,7 @@ Luong hien tai la AI-first, fallback extractive:
 ```text
 latest transcript
   -> ensure chunks
+  -> select summary chunks theo tung window de giu coverage
   -> fallback draft: hierarchical-extractive-v2
   -> neu co GROQ_API_KEY va SUMMARY_MODE khac fallback:
        direct AI summary neu video ngan
@@ -198,6 +199,16 @@ latest transcript
   -> parse strict JSON
   -> upsert Summary theo videoId
 ```
+
+Chi tiet logic hien tai:
+
+- Video ngan co the di theo `direct` summary mot lan.
+- Video dai di theo `map -> collapse -> reduce`.
+- Direct summary va reduce phase dung `SUMMARY_REDUCE_MODEL`.
+- Map phase va collapse phase dung `SUMMARY_MAP_MODEL`.
+- `selectSummaryChunks()` khong con chi lay chunk diem cao nhat toan cuc; no chia transcript thanh cac window va giu lai chunk dai dien moi window de tranh mat noi dung giua video.
+- `collapseMapSummariesIfNeeded()` coi `SUMMARY_COLLAPSE_MAX_GROUPS` la gioi han so summary trung gian dau ra, khong phai kich thuoc gom chunk.
+- Khi khong co `GROQ_API_KEY` hoac AI loi, he thong roi ve `hierarchical-extractive-v2`.
 
 Output public cua summary van giu on dinh:
 
@@ -213,6 +224,11 @@ Output public cua summary van giu on dinh:
 - `groq:<model>:math-summary-direct-v2`
 - `groq:<model>:math-summary-mapreduce-v1`
 - `hierarchical-extractive-v2`
+
+Mac dinh runtime cho summary hien tai la:
+
+- `SUMMARY_MAP_MODEL="llama-3.1-8b-instant"`
+- `SUMMARY_REDUCE_MODEL="llama-3.3-70b-versatile"`
 
 API summary:
 
@@ -429,7 +445,6 @@ Cho Groq/LLM:
 
 ```env
 GROQ_API_KEY="..."
-GROQ_MODEL="llama-3.1-8b-instant"
 GROQ_BASE_URL="https://api.groq.com/openai/v1"
 ```
 
@@ -447,6 +462,8 @@ SUMMARY_REDUCE_MAX_TOKENS="1400"
 SUMMARY_CHUNK_WORD_LIMIT="180"
 SUMMARY_RETRY_ATTEMPTS="3"
 SUMMARY_RETRY_BASE_DELAY_MS="1200"
+SUMMARY_MAP_MODEL="llama-3.1-8b-instant"
+SUMMARY_REDUCE_MODEL="llama-3.3-70b-versatile"
 ```
 
 Cho semantic chunking:
@@ -619,6 +636,7 @@ Neu gap rate limit Groq, nen tach `rag` va `summarize` thanh hai lan chay rieng,
 - Prisma schema tap trung mot noi tai `prisma/schema.prisma`.
 - Chunking va summary duoc tach rieng, de test tung buoc.
 - Summary hien co AI-first path, strict JSON parsing, retry/backoff va fallback extractive.
+- Summary hien co tach model: map/collapse dung model nhe, direct/reduce dung model lon.
 - Quiz co AI-first path tu summary + chunks, fallback rule-based va luu `sourceChunkId`.
 - Chat tra ve `retrievedChunks`, huu ich cho debugging va evaluation.
 - Frontend da co luong hoc co ban: nhap video, xem summary, chat, lam quiz.
@@ -644,9 +662,10 @@ Neu gap rate limit Groq, nen tach `rag` va `summarize` thanh hai lan chay rieng,
 - Them citation ro hon theo `chunkIndex` cho summary, quiz va chat.
 - Gan `scripts/dev.js` vao `package.json` de chay mot lenh.
 - Viet README moi thay template NestJS.
+- Xem lai `GROQ_MODEL` neu muon dong bo lai model chung cho chat/quiz/RAG va summary docs.
 - Them unit/integration tests cho video, chunks, summaries, quizzes va chat.
 - Mo rong eval set de co benchmark on dinh truoc/sau moi lan sua prompt.
 
 ## 14. Tom tat ngan gon
 
-Video Sum la he thong hoc tap tu video YouTube. Backend lay transcript, chia chunk, tao summary, tao quiz va chat dua tren noi dung video. Frontend cung cap giao dien nhap video, xem tom tat, hoi dap va lam trac nghiem. Trang thai hien tai la MVP co day du luong `video -> transcript -> chunks -> summary -> quiz/chat`, co Groq AI path cho summary/quiz/chat, co fallback khi AI loi, va co DeepEval harness de do chat RAG/summarize bang du lieu that.
+Video Sum la he thong hoc tap tu video YouTube. Backend lay transcript, chia chunk, tao summary, tao quiz va chat dua tren noi dung video. Frontend cung cap giao dien nhap video, xem tom tat, hoi dap va lam trac nghiem. Trang thai hien tai la MVP co day du luong `video -> transcript -> chunks -> summary -> quiz/chat`, co Groq AI path cho summary/quiz/chat, summary da tach map/reduce model, co fallback khi AI loi, va co DeepEval harness de do chat RAG/summarize bang du lieu that.

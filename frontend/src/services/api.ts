@@ -20,8 +20,12 @@ const client = axios.create({
 client.interceptors.response.use(
   (res) => res,
   (error) => {
-    const message = error.response?.data?.message || error.message || 'Unknown error';
-    console.error('API Error:', message);
+    const method = error.config?.method?.toUpperCase?.() ?? 'UNKNOWN';
+    const url = error.config?.url ?? 'unknown-url';
+    const message =
+      error.response?.data?.message || error.message || 'Unknown error';
+
+    console.error(`API Error: ${method} ${url}`, message);
     return Promise.reject(error);
   },
 );

@@ -1,8 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+﻿import { Injectable, NotFoundException } from '@nestjs/common';
 import { ChatOpenAI } from '@langchain/openai';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SummaryService } from '../summaries/summary.service';
+import { getTrimmedEnv } from '../config/env';
 
 type QuizOption = 'A' | 'B' | 'C' | 'D';
 
@@ -230,7 +231,7 @@ export class QuizService {
     summary: SummaryInput,
     sourceChunks: SourceChunk[],
   ): Promise<MiniTestQuestion[]> {
-    const groqApiKey = process.env.GROQ_API_KEY;
+    const groqApiKey = getTrimmedEnv('GROQ_API_KEY');
 
     if (!groqApiKey) {
       return [];
@@ -328,7 +329,6 @@ ${summary.simplifiedText}
 SOURCE_CHUNKS:
 ${evidence}`;
   }
-
   private buildRuleMiniTestQuestions(
     summary: SummaryInput,
     sourceChunks: SourceChunk[],
@@ -393,7 +393,6 @@ ${evidence}`;
       },
     ];
   }
-
   private buildQuestion(
     source: QuestionSource,
     index: number,
@@ -433,7 +432,6 @@ ${evidence}`;
 
     return `Câu ${index + 1}: Nội dung nào phù hợp nhất với phần tóm tắt video?`;
   }
-
   private answerForSource(source: QuestionSource): string {
     return this.truncateWords(source.text, 28);
   }
@@ -456,7 +454,6 @@ ${evidence}`;
 
     return `Đáp án ${correctOption} đúng vì nội dung này khớp với phần giải thích/tóm tắt của video.`;
   }
-
   private buildDistractors(
     correctAnswer: string,
     index: number,
@@ -485,7 +482,6 @@ ${evidence}`;
       ...defaults,
     ]).slice(0, 3);
   }
-
   private placeCorrectAnswer(
     correctOption: QuizOption,
     correctAnswer: string,
@@ -763,3 +759,4 @@ ${evidence}`;
       .trim();
   }
 }
+

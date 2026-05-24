@@ -231,7 +231,7 @@ export default function QuizPage() {
             <div className="flex-1 h-1.5 rounded-full bg-parchment-light overflow-hidden">
               <div
                 className="h-full bg-gold rounded-full transition-all duration-300"
-                style={{ width: `${((currentIndex) / quiz.totalQuestions) * 100}%` }}
+                style={{ width: `${(currentIndex / quiz.totalQuestions) * 100}%` }}
               />
             </div>
             <span className="text-xs text-ink-faint font-body tabular-nums">
